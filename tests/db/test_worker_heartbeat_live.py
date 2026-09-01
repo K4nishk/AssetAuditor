@@ -8,7 +8,6 @@ this migration defines (see 0001_init.sql's comments on `worker_heartbeat`).
 Skips cleanly wherever Postgres tooling is unavailable, per CLAUDE.md.
 """
 
-import uuid
 from pathlib import Path
 
 import asyncpg
@@ -24,31 +23,15 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest_asyncio.fixture
-async def seeded_db(pg_cluster):
-    dbname = f"aa_test_{uuid.uuid4().hex}"
-    maint = await asyncpg.connect(
-        host=pg_cluster["socket_dir"], user=pg_cluster["admin_user"], database="postgres"
-    )
-    try:
-        await maint.execute(f'create database "{dbname}"')
-    finally:
-        await maint.close()
-
+async def seeded_db(pg_cluster, scratch_database):
     conn = await asyncpg.connect(
-        host=pg_cluster["socket_dir"], user=pg_cluster["admin_user"], database=dbname
+        host=pg_cluster["socket_dir"], user=pg_cluster["admin_user"], database=scratch_database
     )
     try:
         await conn.execute(MIGRATION_SQL_LOCAL)
         yield conn
     finally:
         await conn.close()
-        maint = await asyncpg.connect(
-            host=pg_cluster["socket_dir"], user=pg_cluster["admin_user"], database="postgres"
-        )
-        try:
-            await maint.execute(f'drop database "{dbname}"')
-        finally:
-            await maint.close()
 
 
 async def test_send_heartbeat_inserts_the_single_row(seeded_db):

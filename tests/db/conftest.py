@@ -6,14 +6,31 @@ what's provable locally against PostgreSQL, never fake a passing test.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
+import asyncpg
 import pytest
+import pytest_asyncio
 
 PG_BINARIES = ["initdb", "pg_ctl", "createdb", "psql"]
+
+# CREATE/DROP DATABASE take an identifier, not a value, so Postgres has no bind
+# parameter for it — this allowlist-and-quote helper is the approved substitute
+# for string-interpolated SQL (CLAUDE.md hard rule #3). Every per-test scratch
+# database in this test tree is minted here, not by hand-building DDL in a
+# fixture, so there's exactly one place that needs to be trusted.
+_SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def quote_ident(name: str) -> str:
+    if not _SAFE_IDENT.match(name):
+        raise ValueError(f"unsafe identifier: {name!r}")
+    return f'"{name}"'
 
 
 def _pg_available() -> bool:
@@ -106,3 +123,34 @@ def pg_cluster():
             capture_output=True,
         )
         shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest_asyncio.fixture
+async def scratch_database(pg_cluster):
+    """Provision a throwaway per-test database on `pg_cluster`, dropped on teardown.
+
+    Centralizes CREATE/DROP DATABASE (see `quote_ident` above) so individual
+    test fixtures never hand-build that DDL themselves.
+    """
+    dbname = f"aa_test_{uuid.uuid4().hex}"
+    ident = quote_ident(dbname)
+
+    async def _maintenance_conn():
+        return await asyncpg.connect(
+            host=pg_cluster["socket_dir"], user=pg_cluster["admin_user"], database="postgres"
+        )
+
+    maint = await _maintenance_conn()
+    try:
+        await maint.execute(f"create database {ident}")
+    finally:
+        await maint.close()
+
+    try:
+        yield dbname
+    finally:
+        maint = await _maintenance_conn()
+        try:
+            await maint.execute(f"drop database {ident}")
+        finally:
+            await maint.close()
