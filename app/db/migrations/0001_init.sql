@@ -390,6 +390,10 @@ grant select, insert, update, delete on public.lineage_events to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- networth_snapshots / term_buckets / diversification_cuts — gold, rebuildable.
+-- run_id is not null so drill-down (pie slice -> gold row -> run_id -> inputs,
+-- ADR v1.0.0 §7) never silently dead-ends; it isn't FK'd to a runs registry
+-- because none exists yet — AA-13 (OpenLineage emitter) owns run_id semantics
+-- and would design that table.
 -- ---------------------------------------------------------------------------
 create table public.networth_snapshots (
     id uuid primary key default gen_random_uuid(),
@@ -398,7 +402,7 @@ create table public.networth_snapshots (
     total_assets_cad numeric(20, 2) not null,
     total_liabilities_cad numeric(20, 2) not null,
     net_worth_cad numeric(20, 2) not null,
-    run_id uuid,
+    run_id uuid not null,
     deactivated_at timestamptz,
     created_at timestamptz not null default now(),
     unique (user_id, snapshot_date)
@@ -421,7 +425,7 @@ create table public.term_buckets (
     snapshot_date date not null,
     bucket text not null,
     amount_cad numeric(20, 2) not null,
-    run_id uuid,
+    run_id uuid not null,
     deactivated_at timestamptz,
     created_at timestamptz not null default now(),
     unique (user_id, snapshot_date, bucket)
@@ -445,7 +449,7 @@ create table public.diversification_cuts (
     cut text not null,
     label text not null,
     amount_cad numeric(20, 2) not null,
-    run_id uuid,
+    run_id uuid not null,
     deactivated_at timestamptz,
     created_at timestamptz not null default now(),
     unique (user_id, snapshot_date, cut, label)

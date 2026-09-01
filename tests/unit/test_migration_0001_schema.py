@@ -111,3 +111,10 @@ def test_account_number_vault_reserves_encryption_column():
     sql = MIGRATION_PATH.read_text()
     block = _table_blocks(sql)["account_number_vault"]
     assert "encrypted_account_number bytea not null" in block
+
+
+def test_gold_tables_require_a_run_id():
+    sql = MIGRATION_PATH.read_text()
+    blocks = _table_blocks(sql)
+    for table in ["networth_snapshots", "term_buckets", "diversification_cuts"]:
+        assert "run_id uuid not null" in blocks[table], table
