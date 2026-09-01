@@ -1,0 +1,1 @@
+# LiteLLM router config (model group "extractor": vllm primary <-> groq fallback) — implemented in AA-16.
