@@ -76,7 +76,10 @@ settle() {
     log "#$pr: worktree busy (orchestrator working) — deferring to the next sweep."
     return 3
   fi
-  git reset --hard -q; git clean -fd -q; git fetch origin --prune --quiet
+  # -e: the locks must survive a clean run from a branch whose .gitignore predates them.
+  git reset --hard -q
+  git clean -fd -q -e .worktree.lock -e .builder.lock -e .sweeper.lock
+  git fetch origin --prune --quiet
   if ! git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
     log "#$pr: branch gone (merged or deleted) — clearing debt."
     clear_review_debt "$branch"; release_worktree; return 0

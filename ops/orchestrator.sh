@@ -680,9 +680,13 @@ run_issue() {
   # Agents routinely leave uncommitted edits behind. Without wiping them the
   # checkout below fails, and since we don't run with `set -e` the script would
   # carry on and cut this issue's branch off the *previous* issue's branch.
-  # `clean -fd` (no -x) leaves .gitignore'd orchestrator state alone.
+  # `clean -fd` (no -x) leaves .gitignore'd orchestrator state alone — but ONLY per
+  # the .gitignore of the branch just checked out. Feature branches cut before the
+  # lock entries were added carry an older .gitignore, so the locks are untracked
+  # there and get deleted mid-run (observed 2026-09-01: .builder.lock vanished under
+  # a live build). -e does not depend on the branch, so exclude them explicitly.
   git reset --hard -q
-  git clean -fd -q
+  git clean -fd -q -e .worktree.lock -e .builder.lock -e .sweeper.lock
 
   # Stacked-PR base selection: if the previous issue's branch exists and is not
   # yet merged into development, cut from it so this agent can build on that

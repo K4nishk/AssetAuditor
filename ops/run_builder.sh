@@ -71,8 +71,16 @@ fi
 # 4. continue the existing stack. Branches are cut from the newest unmerged feature
 #    branch so unmerged upstream work is inherited; if everything has been merged,
 #    the orchestrator falls back to development on its own.
-top=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' \
-        refs/remotes/origin/feature/ 2>/dev/null | head -1 | sed 's|^origin/||')
+# Pick the top by STACK DEPTH (commits ahead of development), not by commit date.
+# Date is wrong: a late fix commit pushed to an early branch — e.g. CodeRabbit
+# answering PR #3 on feature/kch-37 at 13:51 — makes the BOTTOM of the stack look
+# like the newest branch. On 2026-09-01 that stacked KCH-51..54 onto kch-37, where
+# masking.py and the Scotiabank adapter are still stubs, and every one of them
+# failed. The chain grows by one commit per issue, so the deepest branch is the tip.
+top=$(for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/feature/ 2>/dev/null); do
+        git merge-base --is-ancestor "$b" origin/development 2>/dev/null && continue
+        printf '%s\t%s\n' "$(git rev-list --count origin/development.."$b" 2>/dev/null || echo 0)" "$b"
+      done | sort -rn -k1,1 | head -1 | cut -f2 | sed 's|^origin/||')
 if [ -n "${top:-}" ] && ! git merge-base --is-ancestor "origin/$top" origin/development 2>/dev/null; then
   export SEED_LAST_BRANCH="$top"
   export SEED_LAST_ISSUE="$(echo "$top" | sed 's|feature/||' | tr '[:lower:]' '[:upper:]')"
