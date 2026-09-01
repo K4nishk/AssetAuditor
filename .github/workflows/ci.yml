@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [development, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (ruff + mypy + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tests/db/conftest.py spins up a real ephemeral Postgres cluster (initdb/pg_ctl)
+      # for the RLS proof in tests/db/test_migration_0001_rls.py. It skips cleanly
+      # wherever those binaries are missing (e.g. the agent sandbox), but a GitHub
+      # runner has apt access, so install them here and let the test run for real.
+      - name: Install PostgreSQL server binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql
+          pg_bin="$(dirname "$(find /usr/lib/postgresql -maxdepth 2 -name initdb | head -n1)")"
+          echo "$pg_bin" >> "$GITHUB_PATH"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # Includes S608 (flake8-bandit): fails the build on f-string/%-format/concat SQL
+      # per CLAUDE.md hard rule #3 — "raw SQL, parameterized only".
+      - name: ruff check (lint + SQL-injection guard)
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy app worker api
+
+      - name: pytest
+        run: uv run pytest -v
+
+  frontend:
+    name: frontend (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` requires package-lock.json to already match package.json exactly.
+      # This CI change (adding eslint + eslint.config.js) can't regenerate the lock
+      # here — no network in this environment (see CLAUDE.md unattended-run notes)
+      # — so `npm install` resolves it fresh each run instead. Once someone runs
+      # `npm install` for this once on a networked machine and commits the refreshed
+      # lockfile, this can switch back to `npm ci`.
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+
+  migration-dry-run:
+    name: migration dry-run (Supabase branch DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AA-4 (deploy rails) provisions a dedicated free-tier Supabase project used
+      # purely as a CI "branch" DB (not the paid Branching add-on — see ADR v1.1.0
+      # §4's zero-cost contract) and wires these three secrets. Until then this job
+      # reports a clear notice and passes, rather than blocking every PR on a
+      # dependency this issue (AA-3) doesn't own.
+      - name: Check Supabase branch DB secrets
+        id: check
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_ID" ] && [ -n "$SUPABASE_DB_PASSWORD" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "::notice::SUPABASE_ACCESS_TOKEN / SUPABASE_PROJECT_ID / SUPABASE_DB_PASSWORD are not set yet (AA-4 provisions the branch project) — skipping the live dry-run. This step starts enforcing automatically once those secrets exist."
+
+      - name: Set up Supabase CLI
+        if: steps.check.outputs.configured == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # `supabase link`/`db push` expect a `supabase/` project directory; the repo's
+      # actual migrations live in app/db/migrations (see CLAUDE.md read-first map),
+      # so generate a throwaway `supabase/` scaffold per run and point it at them
+      # rather than duplicating migration files or committing a second copy.
+      - name: Point Supabase CLI at app/db/migrations
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          supabase init --force
+          rm -rf supabase/migrations
+          ln -s ../app/db/migrations supabase/migrations
+
+      - name: Link Supabase branch project
+        if: steps.check.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+
+      # Dry run only: prints which pending migrations would apply without touching
+      # the branch DB's schema, so a bad migration fails CI instead of the merge.
+      - name: Dry-run pending migrations
+        if: steps.check.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase db push --dry-run
