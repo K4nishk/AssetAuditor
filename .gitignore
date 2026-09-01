@@ -4,6 +4,15 @@ ops/.completed_issues
 ops/.agent_contracts.md
 ops/.issue_map.tsv
 ops/queue.tsv
+ops/.review_debt.tsv
+ops/.review_debt.tsv.tmp
+ops/.env.local
+# Lock DIRECTORIES: `git clean -fd` removes untracked directories, and run_issue()
+# runs it two lines after taking the worktree lock — so an unignored lock deletes
+# itself and the orchestrator/sweeper mutual exclusion silently stops working.
+ops/.worktree.lock
+ops/.sweeper.lock
+ops/.builder.lock
 CONTRACT_OUT.md
 CR_DISPUTE.md
 MEDIATION_OUT.json
@@ -28,3 +37,6 @@ dist/
 
 # --- os ---
 .DS_Store
+
+# build artifacts
+*.tsbuildinfo

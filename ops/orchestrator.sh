@@ -321,6 +321,16 @@ is_spend_capped() {
     | grep -qiE "spend limit|spending limit|insufficient credit|billing limit|raise it at claude\.ai/settings"
 }
 
+# Per-issue budget exhaustion is neither a code failure nor an account cap: the
+# agent was cut off mid-work by MAX_BUDGET_USD. Observed on KCH-52, which burned
+# $10 and reported subtype "error_max_budget_usd" with an EMPTY result — so it
+# landed in the generic failure bucket and read like the code was broken.
+is_budget_exhausted() {
+  local logfile="$1"
+  [ -f "$logfile" ] || return 1
+  [ "$(jq -r '.subtype // ""' "$logfile" 2>/dev/null)" = "error_max_budget_usd" ]
+}
+
 is_rate_limited() {
   local logfile="$1"
   [ -f "$logfile" ] || return 1
@@ -789,6 +799,14 @@ Your work will be reviewed by CodeRabbit before a PR is opened. Write it to surv
     sleep "$wait_secs"
     release_worktree
     return 1  # caller retries this same issue
+  fi
+
+  if is_budget_exhausted "$logfile"; then
+    log "$identifier: hit MAX_BUDGET_USD ($MAX_BUDGET_USD) mid-implementation — not a code failure."
+    comment_on_issue "$issue_uuid" "💸 Agent stopped at the per-issue budget cap (MAX_BUDGET_USD=$MAX_BUDGET_USD) before finishing. Nothing was pushed. Raise the cap for this issue and retry — the code is not at fault."
+    set_issue_state "$issue_uuid" "Backlog"
+    report "- 💸 **$identifier** — hit the \$$MAX_BUDGET_USD per-issue budget cap mid-work. Raise MAX_BUDGET_USD and retry; this is a budget limit, not a defect."
+    release_worktree; return 2
   fi
 
   if [ "$exit_code" -ne 0 ]; then

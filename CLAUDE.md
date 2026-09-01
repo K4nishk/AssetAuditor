@@ -37,16 +37,40 @@ main                     production-deployment code
 
 ## CodeRabbit review protocol — binding
 
-Every branch is reviewed by CodeRabbit **before** its PR opens (`coderabbit review --agent --committed --base <base> -c CLAUDE.md`). The review carries project-wide context, so treat it as a senior reviewer who has read this whole repo, not a linter.
+CodeRabbit reviews this repo through **three surfaces, and all of them must be accounted for**:
 
-**When findings come back to you:**
-1. Take them seriously. Fix the **underlying pattern**, not the one flagged line — if the same mistake appears in three files, fix all three.
-2. **Never silence a finding**: no disabling lint rules, no `# noqa`/`eslint-disable`, no loosening a type or widening an exception to make it go away. That is a failed review, not a passed one.
-3. Re-run tests and the linter after each fix round; both must pass.
-4. Commit as `fix(<ISSUE>): address CodeRabbit round N`.
-5. If a finding is genuinely wrong, out of scope for this issue, or would violate a hard rule above, **do not force a fix**. Write your reasoning for that specific finding into `CR_DISPUTE.md` (never commit it) and leave the code alone.
+| Surface | When | Who answers it |
+|---|---|---|
+| **CLI gate** — `coderabbit review --agent --committed --base <base> -c CLAUDE.md` | before the PR opens, non-blocking | the implementing agent, then the mediator |
+| **SaaS PR review** — comments the GitHub app posts on the PR | after the PR opens | `ops/remediate_prs.sh` |
+| **Deferred review** — debt settled when quota returns | hourly, via launchd | `ops/review_sweeper.sh` |
 
-**Escalation.** After two fix rounds, a separate mediator agent rules on whatever still blocks: fix it, dismiss it as a false positive or accepted risk with a written rationale, or **escalate it as a new Linear issue** linked to the parent for the owner's morning triage. If you are the mediator: read the actual code before judging, be decisive, don't escalate a three-line fix and don't quietly "fix" something that needs a design decision.
+### The prime directive
+**The owner reviews outcomes, not conversations.** By the time a PR reaches them, every finding is either (a) fixed in the branch, or (b) explained in a PR comment stating the impact of not fixing it and linking the Linear issue that tracks it. Never leave a finding silently unanswered, and never ask for approval on a PR whose review comments nobody has answered.
+
+### The free-tier rule: review is deferred, never skipped, and never blocks
+This project runs CodeRabbit's **free tier on purpose** — 8 reviews per replenishing window, far fewer than the queue needs. When quota runs out the gate does not sleep or stall: it records the unfinished review in `ops/.review_debt.tsv`, marks the PR ⏳ `deferred`, and the queue moves on. Running out of review quota is an expected operating condition, not an error.
+
+**Claude's quota and CodeRabbit's quota are independent, and the tooling keeps them that way.** If Claude is out of credit the sweeper still reviews: it publishes findings to the PR and the Linear issue, parks the branch as `reviewed_pending_fix` with the findings saved, and keeps reviewing the next PR. When credit returns it fixes from the stored findings without spending another review. A Claude outage delays fixes; it must never stop reviews.
+
+Three debt states must never be conflated: `never_reviewed`, `unverified` (reviewed and fixed, but the confirming re-review never ran), and `reviewed_pending_fix` (review complete and saved, fixer blocked on Claude credit).
+
+### Classify every finding by contract impact, not by severity
+Severity says how bad the bug is. **Contract impact says who else breaks if you fix it** — and that decides who handles it. Your contract is what you published in `CONTRACT_OUT.md`: module paths, signatures, tables, columns, event shapes, routes.
+
+**Tier 1 — no contract impact. Fix it yourself, now.** Internal to your own files; no downstream agent can observe it. Fix the *pattern*, not just the flagged line. Commit as `fix(<ISSUE>): address CodeRabbit — <what>`. No escalation, no ceremony.
+
+**Tier 2 — low-to-medium contract impact. Fix it, then republish your contract.** The fix changes something you already published. Do the work, rewrite your `CONTRACT_OUT.md` block, **and** write `CONTRACT_DELTA.md` naming the old shape, the new shape, and which downstream issues consume it. A silent contract change is worse than the original finding, because it breaks work that already passed review.
+
+**Tier 3 — high risk. Do not fix. Escalate with evidence.** Redesigns, cross-cutting refactors, ADR decisions, or anything touching provenance, masking, retention or auth. Write `ESCALATION.md` with what you implemented, the finding quoted, why you are not doing it, **the concrete risk of shipping without it**, and what a correct fix would involve. The orchestrator turns that into a Linear issue and posts the impact plus the link as a PR comment.
+
+**Never** silence a finding (no disabled rules, `# noqa`, `eslint-disable`, widened types or exceptions), and never label something Tier 3 to avoid work. Escalating a three-line fix wastes the owner's attention, the scarcest resource here. Equally, never quietly "fix" something that needs a design decision.
+
+### If you are the mediator or remediation agent
+Read the actual code before judging — CodeRabbit can be wrong, and the implementing agent can be wrong about CodeRabbit being wrong. Prefer fixing over escalating; prefer escalating over pretending. An escalated Linear issue must stand alone: file paths, the quoted finding, and what "done" looks like.
+
+### Shared worktree
+The orchestrator, the sweeper and the build scheduler share one git worktree and all run `git reset --hard`. Every one of them takes `ops/.worktree.lock` first. Never add a background job that touches the worktree without taking that lock — and never remove the `ops/.*.lock` entries from `.gitignore`, because `git clean -fd` deletes untracked directories and a lock that isn't ignored deletes itself.
 
 ## Unattended overnight runs
 

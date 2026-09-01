@@ -1,4 +1,8 @@
 # Runbooks (stubs — filled during build)
+- **Deferred code review (free-tier CodeRabbit).** The build never waits on review quota; unfinished reviews are banked in `ops/.review_debt.tsv` and settled hourly by a launchd agent. Inspect with `./ops/review_sweeper.sh --status`, run on demand with `./ops/review_sweeper.sh`, manage with `./ops/install_sweeper.sh --status|--uninstall`.
+- **Autonomous development.** `./ops/install_builder.sh` schedules `run_builder.sh` every 2 hours; it skips if a build is running, an issue is in flight, or the queue is done. Logs: `ops/logs/builder.log`.
+- Sweeper or builder not firing: `launchctl print gui/$(id -u)/com.assetauditor.review-sweeper`; check `ops/logs/sweeper.err.log`. launchd has a minimal PATH, so the agents run a login shell — a missing tool there means PATH, not a missing install.
+- **Never launch with uncommitted changes in `ops/`.** The first `git reset --hard` silently swaps the running toolchain for the last committed version, and every safety property added since disappears without a word (this cost KCH-51 on 2026-09-01).
 - **Overnight build orchestration** — full runbook in [`ops/README.md`](../../ops/README.md): first-run bootstrap, nightly `tmux` launch, the CodeRabbit gate and its escalation path, the morning PR approval order, and a failure-symptom table. Night reports land in `ops/logs/NIGHT_REPORT.md`.
 - CodeRabbit gate fired but nothing merged: expected. Human review on `development` is the only merge gate; agents never merge.
 - GPU box down — what still works: uploads accepted + queued (bronze lands in Blob), dashboards serve last gold, rooms engine unaffected; nothing parses until the box returns. Check `worker_heartbeat` + queued-jobs alert.

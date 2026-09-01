@@ -37,13 +37,16 @@ created: 2026-08-31
 - [[30-architecture/Security-Model]]
 - [[30-architecture/Observability]]
 - [[30-architecture/LLM-Strategy]]
+- [[30-architecture/Review-Debt-Sweeper]] — deferred code review, settled hourly
 
 ## Research (verdicts: leverage / borrow-ideas / skip)
 - [[40-research/OSS-Portfolio-Trackers]]
 - [[40-research/PDF-Statement-Parsing]]
 - [[40-research/Lineage-OpenLineage]]
 - [[40-research/LLM-Routing-LiteLLM]]
+- [[40-research/Scheduling-launchd]]
 
 ## Decisions log
 - [[50-decisions-log/2026-08-31-planning-session]]
+- [[50-decisions-log/2026-09-01-review-debt]] — free-tier CodeRabbit, deferred review, autonomous loops
 - [[50-decisions-log/2026-08-31-clarifications-round]] — CLARIFICATIONS resolved → ADR v1.1.0, planning wrap-up ready
