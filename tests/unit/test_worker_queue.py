@@ -11,19 +11,24 @@ from __future__ import annotations
 
 import pytest
 
-from worker.queue import claim_next_job, release_job
+from worker.queue import claim_next_job, count_queued_jobs, release_job
 
 pytestmark = pytest.mark.asyncio
 
 
 class FakeConnection:
-    def __init__(self, fetchrow_result=None):
+    def __init__(self, fetchrow_result=None, fetchval_result=None):
         self.calls: list[tuple[str, tuple]] = []
         self._fetchrow_result = fetchrow_result
+        self._fetchval_result = fetchval_result
 
     async def fetchrow(self, query: str, *args):
         self.calls.append((query, args))
         return self._fetchrow_result
+
+    async def fetchval(self, query: str, *args):
+        self.calls.append((query, args))
+        return self._fetchval_result
 
 
 async def test_claim_next_job_binds_claimed_by_as_a_parameter():
@@ -91,3 +96,14 @@ async def test_release_job_rejects_a_disallowed_transition():
         )
 
     assert conn.calls == []
+
+
+async def test_count_queued_jobs_returns_the_pending_count():
+    conn = FakeConnection(fetchval_result=3)
+
+    result = await count_queued_jobs(conn)
+
+    assert result == 3
+    query, args = conn.calls[0]
+    assert "status = 'pending'" in query
+    assert args == ()

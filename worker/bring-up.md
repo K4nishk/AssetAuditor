@@ -55,6 +55,22 @@ from public.worker_heartbeat;
 up` succeeds but this row never updates, check `WORKER_DATABASE_URL` first —
 the container has no other way to reach Supabase.
 
+The same row backs `GET /api/uploads/{id}/status`'s "queued — will process
+when your worker is online" message (AA-34) — a pending upload's response
+flips `worker_online: false` once `age` exceeds ~90s.
+
+## Metrics check
+
+The worker also serves Prometheus text format on `/metrics` (`worker/metrics.py`,
+port `WORKER_METRICS_PORT`, default `9100`, `expose`d on the compose network
+only — not published to the host or internet). From inside the compose
+network (e.g. `docker compose exec worker curl -s localhost:9100/metrics`),
+`worker_heartbeat_timestamp` should track `now()` within ~30s and
+`etl_jobs_queued` should match `select count(*) from public.etl_jobs where
+status = 'pending'`. Grafana Alloy scraping this endpoint into Grafana Cloud,
+and the `worker/observability/stale_while_queued_alert.yaml` alert rule that
+reads it, are wired up in AA-27.
+
 ## Bringing the box down / recovery
 
 The worker is stateless (bronze/silver live in Blob, all state in Supabase) —

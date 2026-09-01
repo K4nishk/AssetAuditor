@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from uuid import UUID
 
 import asyncpg
@@ -24,7 +25,8 @@ from pydantic import BaseModel
 
 from app.auth import get_current_user_id
 from app.db.pool import rls_connection
-from app.db.queries import bronze_files, etl_jobs
+from app.db.queries import bronze_files, etl_jobs, worker_heartbeat
+from app.domain.worker_status import describe_queue_state
 from app.uploads.blob import BlobUploadError, bronze_pathname, get_blob_storage
 from app.uploads.signing import (
     DEFAULT_TTL_SECONDS,
@@ -74,6 +76,11 @@ class UploadStatusResponse(BaseModel):
     bronze_file_id: str
     status: str
     error: str | None = None
+    # Set only while status == "pending" — AA-34's "queued — will process
+    # when your worker is online" UX. None once a worker has claimed the job
+    # (worker_online/message stop being the relevant question at that point).
+    worker_online: bool | None = None
+    message: str | None = None
 
 
 @router.post("", response_model=RegisterUploadResponse)
@@ -218,6 +225,22 @@ async def upload_status(
     )
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no upload found for this bronze file")
+
+    worker_online: bool | None = None
+    message: str | None = None
+    if job["status"] == "pending":
+        heartbeat = await worker_heartbeat.get_latest_heartbeat(conn)
+        queue_state = describe_queue_state(
+            last_beat_at=heartbeat["last_beat_at"] if heartbeat is not None else None,
+            now=datetime.now(UTC),
+        )
+        worker_online = queue_state.worker_online
+        message = queue_state.message
+
     return UploadStatusResponse(
-        bronze_file_id=str(job["bronze_file_id"]), status=job["status"], error=job["error"]
+        bronze_file_id=str(job["bronze_file_id"]),
+        status=job["status"],
+        error=job["error"],
+        worker_online=worker_online,
+        message=message,
     )

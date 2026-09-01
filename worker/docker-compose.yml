@@ -1,8 +1,10 @@
 # Home-lab GPU box compose stack (ADR v1.1.0 §2) — worker · litellm · vllm
 # (--profile gpu, promoted in AA-33). Outbound-only: nothing here publishes a
 # port to the internet; the worker polls Supabase, it is never polled.
-# Bring-up steps: worker/bring-up.md. Grafana Alloy (scrapes worker/litellm/
-# vllm `/metrics`, ADR v1.1.0 §2) is added by AA-27 once those endpoints exist.
+# Bring-up steps: worker/bring-up.md. The worker's `/metrics` endpoint
+# (worker/metrics.py, AA-34) is `expose`d on the compose network only, same
+# non-published convention as `litellm` below; Grafana Alloy actually
+# scraping it is added by AA-27.
 
 services:
   worker:
@@ -14,6 +16,9 @@ services:
       WORKER_DATABASE_URL: ${WORKER_DATABASE_URL}
       BLOB_READ_WRITE_TOKEN: ${BLOB_READ_WRITE_TOKEN}
       LITELLM_BASE_URL: http://litellm:4000
+      WORKER_METRICS_PORT: "9100"
+    expose:
+      - "9100"
     depends_on:
       - litellm
 

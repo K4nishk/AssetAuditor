@@ -17,7 +17,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from worker.queue import claim_next_job, release_job
+from worker.queue import claim_next_job, count_queued_jobs, release_job
 
 MIGRATION_SQL = Path("app/db/migrations/0001_init.sql").read_text()
 MIGRATION_SQL_LOCAL = MIGRATION_SQL.replace("create extension if not exists pgsodium;\n", "")
@@ -179,3 +179,12 @@ async def test_release_job_is_a_noop_for_a_non_owning_worker(seeded_db):
     )
     assert row["status"] == "claimed"
     assert row["error"] is None
+
+
+async def test_count_queued_jobs_counts_only_pending_rows(seeded_db):
+    conn = seeded_db["conn"]
+    assert await count_queued_jobs(conn) == len(seeded_db["job_ids"])
+
+    await claim_next_job(conn, claimed_by="worker-a")
+
+    assert await count_queued_jobs(conn) == len(seeded_db["job_ids"]) - 1
