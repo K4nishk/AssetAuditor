@@ -26,6 +26,17 @@ from worker.adapters.base import (
 
 INSTITUTION = "wealthsimple"
 
+# Wealthsimple's account `type` values that map onto a room_events account
+# category (app/domain/rooms/models.py's `AccountType`). "fhsa_invest" is
+# Wealthsimple's own product name for an invested FHSA — it still contributes
+# against the same FHSA room as a cash "fhsa" account.
+_ROOM_ACCOUNT_TYPES = {
+    "fhsa_invest": "fhsa",
+    "fhsa": "fhsa",
+    "tfsa": "tfsa",
+    "rrsp": "rrsp",
+}
+
 
 def detect(raw: bytes) -> bool:
     try:
@@ -50,8 +61,9 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
     drafts: list[StagedRowDraft] = []
 
     for account in data.get("accounts", []):
+        account_type = account["type"]
         account_mask = normalize_account_mask(account["account_mask"], INSTITUTION)
-        drafts.append(_account_draft(account["type"], account_mask))
+        drafts.append(_account_draft(account_type, account_mask))
 
         for holding in account.get("holdings", []):
             drafts.append(
@@ -69,7 +81,16 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                 )
             )
 
-        for contribution in account.get("contributions", []):
+        contributions = account.get("contributions", [])
+        if contributions:
+            room_account_type = _ROOM_ACCOUNT_TYPES.get(account_type)
+            if room_account_type is None:
+                raise AdapterParseError(
+                    f"account type {account_type!r} has contributions but no "
+                    "known room-events mapping"
+                )
+
+        for contribution in contributions:
             year = int(contribution["year"])
             drafts.append(
                 StagedRowDraft(
@@ -81,7 +102,7 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                         "currency": "CAD",
                         "occurred_at": datetime(year, 12, 31, tzinfo=UTC).isoformat(),
                         "year": year,
-                        "room_account_type": "fhsa",
+                        "room_account_type": room_account_type,
                     },
                 )
             )

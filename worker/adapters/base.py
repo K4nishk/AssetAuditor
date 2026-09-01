@@ -46,10 +46,21 @@ class AdapterParseError(ValueError):
 
 
 def read_csv_rows(raw: bytes) -> list[dict[str, str]]:
-    """Decode + parse CSV bytes, dropping fully-blank trailing rows."""
+    """Decode + parse CSV bytes, dropping fully-blank trailing rows.
+
+    A row with more fields than the header lands its overflow under
+    `DictReader`'s `None` restkey (a list, not a string) — reject it as a
+    parse error instead of letting `.strip()` raise `AttributeError` on it.
+    """
     text = raw.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
-    return [row for row in reader if any((v or "").strip() for v in row.values())]
+    rows: list[dict[str, str]] = []
+    for row in reader:
+        if None in row:
+            raise AdapterParseError(f"row has more fields than the header: {row!r}")
+        if any((v or "").strip() for v in row.values()):
+            rows.append(row)
+    return rows
 
 
 def csv_header(raw: bytes) -> set[str]:

@@ -8,6 +8,7 @@ rows per `(product, account_mask)`. Normalizes into `account`, `liability`
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from worker.adapters.base import (
@@ -27,6 +28,20 @@ _REQUIRED_COLUMNS = {"product", "account_mask", "as_of", "metric", "value", "cur
 
 def detect(raw: bytes) -> bool:
     return _REQUIRED_COLUMNS <= csv_header(raw)
+
+
+def _require_metric(metrics: dict[str, str], name: str) -> str:
+    """Like `require_decimal`, but for a metric pulled out of the pivoted
+    `metric,value` rows: a missing or blank metric is a hard parse failure
+    rather than a `KeyError` leaking out of adapter internals."""
+    value = metrics.get(name)
+    if not value:
+        raise AdapterParseError(f"missing required TD metric {name!r}")
+    return value
+
+
+def _require_metric_decimal(metrics: dict[str, str], name: str) -> Decimal:
+    return require_decimal(_require_metric(metrics, name), field=name)
 
 
 def parse(raw: bytes) -> list[StagedRowDraft]:
@@ -71,13 +86,9 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                     payload={
                         "account_mask": account_mask,
                         "kind": product,
-                        "balance": require_decimal(
-                            metrics["balance_owing"], field="balance_owing"
-                        ),
+                        "balance": _require_metric_decimal(metrics, "balance_owing"),
                         "currency": currency,
-                        "interest_rate": require_decimal(
-                            metrics["interest_rate_pct"], field="interest_rate_pct"
-                        ),
+                        "interest_rate": _require_metric_decimal(metrics, "interest_rate_pct"),
                         "credit_limit": to_decimal(metrics.get("credit_limit")),
                         "min_payment": to_decimal(metrics.get("min_payment")),
                         "as_of": group["as_of"],
@@ -90,8 +101,8 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                     entity="holding",
                     payload={
                         "account_mask": account_mask,
-                        "ticker": metrics["fund_name"],
-                        "quantity": require_decimal(metrics["units"], field="units"),
+                        "ticker": _require_metric(metrics, "fund_name"),
+                        "quantity": _require_metric_decimal(metrics, "units"),
                         "avg_cost": to_decimal(metrics.get("nav_per_unit")),
                         "currency": currency,
                         "market_value": to_decimal(metrics.get("market_value")),

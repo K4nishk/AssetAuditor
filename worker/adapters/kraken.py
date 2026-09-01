@@ -86,7 +86,7 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
             continue
 
         prior = latest_balance.get(asset)
-        if prior is None or occurred_at > prior[0]:
+        if prior is None or occurred_at >= prior[0]:
             latest_balance[asset] = (occurred_at, balance)
 
     for asset, (_, balance) in latest_balance.items():

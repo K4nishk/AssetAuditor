@@ -13,6 +13,7 @@ from decimal import Decimal
 from typing import Any
 
 from worker.adapters.base import (
+    AdapterParseError,
     StagedRowDraft,
     csv_header,
     normalize_account_mask,
@@ -50,8 +51,16 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
     drafts: list[StagedRowDraft] = []
 
     for row in rows:
-        account_mask = normalize_account_mask(row["account_mask"], INSTITUTION)
+        account_mask = normalize_account_mask(row["account_mask"].strip(), INSTITUTION)
         account_type = row["account"].strip().lower()
+        trade_date = row["trade_date"].strip()
+
+        action = row["action"].strip().lower()
+        if action != "buy":
+            raise AdapterParseError(
+                f"unsupported Questrade action {action!r} for {row['symbol']!r} "
+                f"on {trade_date}: only BUY fills are normalized by this adapter"
+            )
 
         if account_mask not in accounts_seen:
             accounts_seen[account_mask] = {
@@ -66,7 +75,7 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
         price = require_decimal(row["price"], field="price")
         commission = to_decimal(row["commission"]) or Decimal("0")
         currency = row["currency"].strip()
-        occurred_at = to_datetime_utc(row["trade_date"])
+        occurred_at = to_datetime_utc(trade_date)
 
         drafts.append(
             StagedRowDraft(
@@ -77,7 +86,7 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                     "quantity": quantity,
                     "unit_cost": price,
                     "currency": currency,
-                    "acquired_at": row["trade_date"],
+                    "acquired_at": trade_date,
                     "vested": None,
                 },
             )
@@ -89,7 +98,7 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                 payload={
                     "account_mask": account_mask,
                     "ticker": symbol,
-                    "kind": row["action"].strip().lower(),
+                    "kind": action,
                     "amount": quantity * price + commission,
                     "currency": currency,
                     "occurred_at": occurred_at.isoformat(),
