@@ -27,6 +27,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 _ALGORITHMS = ["ES256", "RS256"]
 _JWKS_TTL_SECONDS = 3600.0
 _FETCH_TIMEOUT_SECONDS = 5.0
+_MIN_REFETCH_INTERVAL_SECONDS = 30.0
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -46,6 +47,7 @@ class JWKSCache:
 
     jwks_url: str
     ttl_seconds: float = _JWKS_TTL_SECONDS
+    min_refetch_interval_seconds: float = _MIN_REFETCH_INTERVAL_SECONDS
     _fetched_at: float = field(default=0.0, init=False, repr=False)
     _keys_by_kid: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
 
@@ -60,10 +62,17 @@ class JWKSCache:
         return {key["kid"]: key for key in payload.get("keys", []) if "kid" in key}
 
     def get_key(self, kid: str) -> dict[str, Any]:
-        is_stale = (time.monotonic() - self._fetched_at) > self.ttl_seconds
-        if is_stale or kid not in self._keys_by_kid:
+        now = time.monotonic()
+        is_stale = (now - self._fetched_at) > self.ttl_seconds
+        is_unknown = kid not in self._keys_by_kid
+        # An unknown kid alone must not trigger a fetch on every call - a burst of
+        # tokens carrying bogus kids would otherwise hammer the JWKS endpoint on
+        # every single request, blowing the zero-cost contract (CLAUDE.md rule 6).
+        # Staleness still refetches immediately regardless of this interval.
+        may_refetch_for_unknown_kid = (now - self._fetched_at) > self.min_refetch_interval_seconds
+        if is_stale or (is_unknown and may_refetch_for_unknown_kid):
             self._keys_by_kid = self._fetch()
-            self._fetched_at = time.monotonic()
+            self._fetched_at = now
 
         try:
             return self._keys_by_kid[kid]
@@ -122,7 +131,7 @@ def decode_supabase_jwt(token: str, cache: JWKSCache, audience: str) -> dict[str
     return claims
 
 
-async def get_current_user_id(
+def get_current_user_id(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> str:
     """FastAPI dependency: verify the bearer JWT and return its `sub` claim.
@@ -130,6 +139,12 @@ async def get_current_user_id(
     Routes depend on this instead of ever trusting a `user_id` supplied by
     the client (CLAUDE.md hard rule #4); it is also the identity handed to
     `app.db.pool.rls_connection` so Postgres RLS enforces the same boundary.
+
+    Deliberately a sync `def`, not `async def`: the work underneath (JWKS
+    fetch via `urllib`, `jwt.decode`'s signature verification) is blocking.
+    A sync dependency runs FastAPI's threadpool, keeping that blocking work
+    off the event loop; an `async def` here would run it inline and stall
+    every other in-flight request.
     """
     if credentials is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")

@@ -11,6 +11,7 @@ request that happens to reuse the same physical connection.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -18,12 +19,22 @@ from contextlib import asynccontextmanager
 import asyncpg
 
 _pool: asyncpg.Pool | None = None
+_pool_lock = asyncio.Lock()
 
 
 async def get_pool() -> asyncpg.Pool:
+    """Lazily create the process-wide pool, guarded against concurrent creation.
+
+    `asyncpg.create_pool` awaits, so two concurrent requests can both observe
+    `_pool is None` before either finishes creating one. The lock plus a
+    recheck inside it (double-checked locking) ensures only one pool is ever
+    created; everyone else just waits for it and reuses the same instance.
+    """
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(os.environ["DATABASE_URL"])
+        async with _pool_lock:
+            if _pool is None:
+                _pool = await asyncpg.create_pool(os.environ["DATABASE_URL"])
     return _pool
 
 
