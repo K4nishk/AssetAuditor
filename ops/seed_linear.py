@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -39,6 +40,31 @@ WHY_RE = re.compile(r"^\*Why:\s*(.+?)\*$")
 DEPS_RE = re.compile(r"deps:\s*([^.]*)", re.IGNORECASE)
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """A verifying TLS context that still works on stock python.org builds.
+
+    Those installers ship an empty `etc/openssl/cert.pem` until someone runs
+    "Install Certificates.command", so `urllib` fails with CERTIFICATE_VERIFY_FAILED
+    while `curl` (system keychain) succeeds on the same machine. Fall back to
+    certifi's bundle when the interpreter's own store is empty. Verification is
+    never disabled — an API key travels in these request headers.
+    """
+    ctx = ssl.create_default_context()
+    if not ctx.get_ca_certs():
+        try:
+            import certifi
+
+            ctx.load_verify_locations(certifi.where())
+        except ImportError:
+            sys.exit(
+                "This Python has no root certificates and certifi is not installed.\n"
+                "Fix either way:\n"
+                '  /Applications/Python\\ 3.14/Install\\ Certificates.command   # system-wide\n'
+                "  python3 -m pip install certifi                              # this script only"
+            )
+    return ctx
+
+
 def gql(query: str, variables: dict | None = None) -> dict:
     key = os.environ.get("LINEAR_API_KEY")
     if not key:
@@ -48,10 +74,14 @@ def gql(query: str, variables: dict | None = None) -> dict:
         API, data=body, headers={"Authorization": key, "Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
             payload = json.load(resp)
     except urllib.error.HTTPError as exc:  # surface Linear's own error text
-        sys.exit(f"Linear API HTTP {exc.code}: {exc.read().decode()[:500]}")
+        hint = "  (401/403 usually means the key is wrong or revoked)" if exc.code in (401, 403) else ""
+        sys.exit(f"Linear API HTTP {exc.code}: {exc.read().decode()[:500]}{hint}")
+    except urllib.error.URLError as exc:  # no network / DNS / proxy refusal
+        sys.exit(f"Could not reach {API}: {exc.reason}\n"
+                 "Check your connection — and note this cannot run inside a sandboxed agent shell.")
     if "errors" in payload:
         sys.exit(f"Linear API error: {json.dumps(payload['errors'])[:500]}")
     return payload["data"]
@@ -116,7 +146,16 @@ def main() -> None:
     data = gql('{ teams(filter: { key: { eq: "%s" } }) { nodes { id key name } } }' % team_key)
     nodes = data["teams"]["nodes"]
     if not nodes:
-        sys.exit(f"No Linear team with key {team_key!r}.")
+        # LINEAR_TEAM_KEY is the short KEY that prefixes issue ids (the "KCH" in
+        # KCH-9), not the team's display name — an easy and unhelpful thing to get
+        # wrong, so show what actually exists rather than just refusing.
+        available = gql("{ teams { nodes { key name } } }")["teams"]["nodes"]
+        listing = "\n".join(f"  LINEAR_TEAM_KEY={t['key']:<8} # {t['name']}" for t in available)
+        sys.exit(
+            f"No Linear team with key {team_key!r}.\n"
+            "LINEAR_TEAM_KEY must be the team KEY that prefixes issue ids (e.g. KCH in KCH-9),\n"
+            f"not the team name. Your teams:\n{listing}"
+        )
     team_id, team_name = nodes[0]["id"], nodes[0]["name"]
     print(f"Target team: {team_key} ({team_name})")
 
