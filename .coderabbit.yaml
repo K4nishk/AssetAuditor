@@ -1,0 +1,77 @@
+# CodeRabbit configuration for AssetAuditor.
+#
+# Two things this file exists to fix:
+#   1. By default CodeRabbit only auto-reviews PRs targeting the repo's DEFAULT
+#      branch (main). Every agent PR here targets `development` — and a stacked PR
+#      targets the PREVIOUS feature branch — so without base_branches below, PRs
+#      are skipped with "review skipped: base branch is not in the list".
+#   2. It gives the SaaS review the same project rules the CLI gate gets via
+#      `coderabbit review -c CLAUDE.md`, so both reviewers judge by one standard.
+
+language: en-US
+
+reviews:
+  # Agents write this code unattended; a reviewer that states its reasoning is
+  # worth more here than a terse one, because the mediator agent reads it too.
+  profile: assertive
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+  poem: false
+  # Do NOT auto-request-changes: human approval is the merge gate, and a bot
+  # blocking state on a stacked PR chain is noise rather than safety.
+  request_changes_workflow: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - development
+      - "feature/.*"   # stacked PRs are based on the previous issue's branch
+
+  path_filters:
+    - "!**/*.lock"
+    - "!**/uv.lock"
+    - "!**/package-lock.json"
+    - "!ops/logs/**"
+    - "!data/samples/**"          # fabricated fixtures; reviewed as a contract, not as code
+    - "!docs/**"
+    - "!wireframes/**"
+    - "!templates/**"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: >-
+        Enforce AssetAuditor's hard rules from CLAUDE.md.
+        (1) Provenance: any write to a silver or gold table must emit an OpenLineage
+        event; flag writes that do not. (2) Masking: no unmasked statement text,
+        account number, or PII may reach an LLM call, a log line, an analytics event,
+        or a metric label. (3) Money and quantities must use Decimal, never float —
+        crypto needs 8 decimal places. (4) Raw SQL only, always parameterized; flag
+        any f-string, .format(), or concatenation used to build SQL. (5) user_id must
+        come from the verified JWT, never from a request body or query parameter.
+        (6) Contribution-room math must be deterministic Python, never model output.
+        Also flag silenced errors, bare excepts, and tests asserting nothing.
+
+    - path: "**/migrations/*.sql"
+      instructions: >-
+        Every user-facing table needs RLS enabled with a policy scoping rows to the
+        authenticated user. Flag any table created without RLS, any policy using
+        USING (true), and destructive statements without a guard. Migrations are
+        append-only: flag edits to an already-applied migration file.
+
+    - path: "worker/adapters/*.py"
+      instructions: >-
+        Institution adapters must round-trip their fixture in data/samples/ exactly.
+        Flag hardcoded values that belong in config, silent exception swallowing that
+        would drop transactions, and float arithmetic on amounts or quantities.
+
+    - path: "frontend/**/*.{ts,tsx}"
+      instructions: >-
+        No financial values in analytics event payloads (Amplitude/Vercel) — behaviour
+        events only. The frontend must never compute financial math; it renders values
+        the API already computed. Flag any amount, ticker, or account identifier sent
+        to a third-party script.
+
+chat:
+  auto_reply: true
