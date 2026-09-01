@@ -86,12 +86,26 @@ async def emit_lineage_event(
     )
 
 
+_StepState = Literal["started", "completed", "failed"]
+
+
+class LineageStateError(ValueError):
+    """Raised when a step's START/COMPLETE/FAIL calls are out of order."""
+
+
 class LineageEmitter:
     """Binds one `(conn, user_id, run_id, job_id)` so a step only names itself.
 
     One instance per `etl_jobs` processing attempt — construct it once a job
     is claimed (`worker.queue.claim_next_job`) and reuse it across every step
     that job goes through, so all of that attempt's events share `run_id`.
+
+    Tracks each step's own START -> {COMPLETE | FAIL} lifecycle in memory and
+    rejects calls that would break it (COMPLETE/FAIL before START, a second
+    START, or a second terminal event) — the drill-down panel (AA-23) walks
+    `run_id` assuming exactly one START and one terminal event per step, so a
+    caller bug here must fail loudly rather than write a row that violates
+    that assumption.
     """
 
     def __init__(
@@ -106,21 +120,44 @@ class LineageEmitter:
         self._user_id = user_id
         self._job_id = job_id
         self.run_id = run_id or new_run_id()
+        self._step_states: dict[str, _StepState] = {}
 
     async def start(
         self, step: str, *, facets: Mapping[str, Any] | None = None
     ) -> asyncpg.Record:
-        return await self._emit("START", step, facets)
+        prior = self._step_states.get(step)
+        if prior is not None:
+            raise LineageStateError(
+                f"duplicate START for step {step!r} (already {prior})"
+            )
+        row = await self._emit("START", step, facets)
+        self._step_states[step] = "started"
+        return row
 
     async def complete(
         self, step: str, *, facets: Mapping[str, Any] | None = None
     ) -> asyncpg.Record:
-        return await self._emit("COMPLETE", step, facets)
+        self._require_started(step, "COMPLETE")
+        row = await self._emit("COMPLETE", step, facets)
+        self._step_states[step] = "completed"
+        return row
 
     async def fail(
         self, step: str, *, error: str, facets: Mapping[str, Any] | None = None
     ) -> asyncpg.Record:
-        return await self._emit("FAIL", step, {**(facets or {}), "error": error})
+        self._require_started(step, "FAIL")
+        row = await self._emit("FAIL", step, {**(facets or {}), "error": error})
+        self._step_states[step] = "failed"
+        return row
+
+    def _require_started(self, step: str, event_type: EventType) -> None:
+        state = self._step_states.get(step)
+        if state is None:
+            raise LineageStateError(f"{event_type} for step {step!r} before START")
+        if state != "started":
+            raise LineageStateError(
+                f"{event_type} for step {step!r} after terminal event ({state})"
+            )
 
     async def _emit(
         self, event_type: EventType, step: str, facets: Mapping[str, Any] | None
