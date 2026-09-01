@@ -72,15 +72,34 @@ def pg_cluster():
         pytest.skip(f"pg_ctl start failed: {start.stderr}\n{log}")
 
     try:
-        created = subprocess.run(
-            ["createdb", "-h", str(base), "-U", "postgres", "assetauditor_test"],
+        # `authenticated` is cluster-scoped (a role, not a schema object), so it's
+        # created once here rather than per-test — per-test databases (below) give
+        # each test a clean schema without fighting over a role that outlives them.
+        role = subprocess.run(
+            [
+                "psql",
+                "-h",
+                str(base),
+                "-U",
+                "postgres",
+                "-d",
+                "postgres",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-c",
+                "do $$ begin "
+                "if not exists (select from pg_roles where rolname = 'authenticated') then "
+                "create role authenticated login; "
+                "end if; "
+                "end $$;",
+            ],
             capture_output=True,
             text=True,
         )
-        if created.returncode != 0:
-            pytest.skip(f"createdb failed: {created.stderr}")
+        if role.returncode != 0:
+            pytest.skip(f"failed to create authenticated role: {role.stderr}")
 
-        yield {"socket_dir": str(base), "dbname": "assetauditor_test", "admin_user": "postgres"}
+        yield {"socket_dir": str(base), "admin_user": "postgres"}
     finally:
         subprocess.run(
             ["pg_ctl", "stop", "-D", str(data_dir), "-m", "immediate"],

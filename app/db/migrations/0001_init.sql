@@ -24,6 +24,20 @@ create extension if not exists pgcrypto;
 create extension if not exists pgsodium;
 
 -- ---------------------------------------------------------------------------
+-- set_updated_at — shared BEFORE UPDATE trigger for tables that track
+-- updated_at; attached per-table below.
+-- ---------------------------------------------------------------------------
+create function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+    new.updated_at = now();
+    return new;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- users_profile — one row per Supabase Auth user; id IS the user id (no
 -- separate user_id column needed).
 -- ---------------------------------------------------------------------------
@@ -40,6 +54,11 @@ create table public.users_profile (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+create trigger users_profile_set_updated_at
+    before update on public.users_profile
+    for each row
+    execute function public.set_updated_at();
 
 alter table public.users_profile enable row level security;
 
@@ -91,10 +110,16 @@ create table public.etl_jobs (
     error text,
     deactivated_at timestamptz,
     created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now()
+    updated_at timestamptz not null default now(),
+    unique (user_id, id)
 );
 
 create index etl_jobs_user_id_idx on public.etl_jobs (user_id);
+
+create trigger etl_jobs_set_updated_at
+    before update on public.etl_jobs
+    for each row
+    execute function public.set_updated_at();
 
 alter table public.etl_jobs enable row level security;
 
@@ -112,7 +137,7 @@ grant select, insert, update, delete on public.etl_jobs to authenticated;
 create table public.staged_rows (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
-    job_id uuid not null references public.etl_jobs (id) on delete cascade,
+    job_id uuid not null,
     entity text not null
         check (entity in ('transaction', 'holding', 'lot', 'liability', 'account')),
     payload jsonb not null,
@@ -121,7 +146,8 @@ create table public.staged_rows (
         check (method in ('deterministic', 'llm', 'manual_entry', 'manual_correction')),
     confirmed_at timestamptz,
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (user_id, job_id) references public.etl_jobs (user_id, id) on delete cascade
 );
 
 create index staged_rows_user_id_idx on public.staged_rows (user_id);
@@ -148,7 +174,8 @@ create table public.accounts (
     masked_identifier text,
     currency text not null default 'CAD',
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    unique (user_id, id)
 );
 
 create index accounts_user_id_idx on public.accounts (user_id);
@@ -170,10 +197,11 @@ grant select, insert, update, delete on public.accounts to authenticated;
 create table public.account_number_vault (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
-    account_id uuid not null references public.accounts (id) on delete cascade,
+    account_id uuid not null,
     encrypted_account_number bytea not null,
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (user_id, account_id) references public.accounts (user_id, id) on delete cascade
 );
 
 create index account_number_vault_user_id_idx on public.account_number_vault (user_id);
@@ -193,13 +221,15 @@ grant select, insert, update, delete on public.account_number_vault to authentic
 create table public.holdings (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
-    account_id uuid not null references public.accounts (id) on delete cascade,
+    account_id uuid not null,
     ticker text not null,
     quantity numeric(20, 8) not null,
     avg_cost numeric(20, 8),
     currency text not null default 'CAD',
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    unique (user_id, id),
+    foreign key (user_id, account_id) references public.accounts (user_id, id) on delete cascade
 );
 
 create index holdings_user_id_idx on public.holdings (user_id);
@@ -219,14 +249,15 @@ grant select, insert, update, delete on public.holdings to authenticated;
 create table public.lots (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
-    holding_id uuid not null references public.holdings (id) on delete cascade,
+    holding_id uuid not null,
     quantity numeric(20, 8) not null,
     unit_cost numeric(20, 8),
     currency text not null default 'CAD',
     acquired_at date,
     vested boolean,
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (user_id, holding_id) references public.holdings (user_id, id) on delete cascade
 );
 
 create index lots_user_id_idx on public.lots (user_id);
@@ -247,8 +278,8 @@ grant select, insert, update, delete on public.lots to authenticated;
 create table public.transactions (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
-    account_id uuid not null references public.accounts (id) on delete cascade,
-    holding_id uuid references public.holdings (id) on delete set null,
+    account_id uuid not null,
+    holding_id uuid,
     occurred_at timestamptz not null,
     kind text not null,
     amount numeric(20, 8) not null,
@@ -258,7 +289,9 @@ create table public.transactions (
     fx_date date,
     description text,
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (user_id, account_id) references public.accounts (user_id, id) on delete cascade,
+    foreign key (user_id, holding_id) references public.holdings (user_id, id) on delete set null (holding_id)
 );
 
 create index transactions_user_id_idx on public.transactions (user_id);
@@ -278,13 +311,14 @@ grant select, insert, update, delete on public.transactions to authenticated;
 create table public.liabilities (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
-    account_id uuid references public.accounts (id) on delete set null,
+    account_id uuid,
     kind text not null,
     balance numeric(20, 2) not null,
     currency text not null default 'CAD',
     interest_rate numeric(6, 4),
     deactivated_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (user_id, account_id) references public.accounts (user_id, id) on delete set null (account_id)
 );
 
 create index liabilities_user_id_idx on public.liabilities (user_id);
@@ -333,12 +367,13 @@ create table public.lineage_events (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references auth.users (id) on delete cascade,
     run_id uuid not null,
-    job_id uuid references public.etl_jobs (id) on delete set null,
+    job_id uuid,
     event_type text not null check (event_type in ('START', 'COMPLETE', 'FAIL')),
     facets jsonb not null default '{}'::jsonb,
     payload jsonb not null default '{}'::jsonb,
     deactivated_at timestamptz,
-    occurred_at timestamptz not null default now()
+    occurred_at timestamptz not null default now(),
+    foreign key (user_id, job_id) references public.etl_jobs (user_id, id) on delete set null (job_id)
 );
 
 create index lineage_events_user_id_idx on public.lineage_events (user_id);

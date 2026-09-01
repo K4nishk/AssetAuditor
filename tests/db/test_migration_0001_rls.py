@@ -39,7 +39,6 @@ as $$
     select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
 $$;
 
-create role authenticated login;
 grant usage on schema auth to authenticated;
 grant execute on function auth.uid() to authenticated;
 grant usage on schema public to authenticated;
@@ -48,25 +47,44 @@ grant usage on schema public to authenticated;
 pytestmark = pytest.mark.asyncio
 
 
-async def _admin_conn(pg_cluster):
+async def _maintenance_conn(pg_cluster):
     return await asyncpg.connect(
         host=pg_cluster["socket_dir"],
         user=pg_cluster["admin_user"],
-        database=pg_cluster["dbname"],
+        database="postgres",
     )
 
 
-async def _authenticated_conn(pg_cluster):
+async def _admin_conn(pg_cluster, dbname):
+    return await asyncpg.connect(
+        host=pg_cluster["socket_dir"],
+        user=pg_cluster["admin_user"],
+        database=dbname,
+    )
+
+
+async def _authenticated_conn(pg_cluster, dbname):
     return await asyncpg.connect(
         host=pg_cluster["socket_dir"],
         user="authenticated",
-        database=pg_cluster["dbname"],
+        database=dbname,
     )
 
 
 @pytest_asyncio.fixture
 async def seeded_db(pg_cluster):
-    admin = await _admin_conn(pg_cluster)
+    # Each test gets its own database — `authenticated` is a role (cluster-scoped,
+    # created once in the pg_cluster fixture) but schemas/tables aren't, so reusing
+    # one database across tests would leak state (and re-running AUTH_STUB_SQL's
+    # `create schema auth` would fail outright on the second test).
+    dbname = f"aa_test_{uuid.uuid4().hex}"
+    maint = await _maintenance_conn(pg_cluster)
+    try:
+        await maint.execute(f'create database "{dbname}"')
+    finally:
+        await maint.close()
+
+    admin = await _admin_conn(pg_cluster, dbname)
     try:
         await admin.execute(AUTH_STUB_SQL)
         await admin.execute(MIGRATION_SQL_LOCAL)
@@ -106,13 +124,24 @@ async def seeded_db(pg_cluster):
             """
         )
 
-        yield {"user_a": user_a, "user_b": user_b, "account_a": account_a, "account_b": account_b}
+        yield {
+            "dbname": dbname,
+            "user_a": user_a,
+            "user_b": user_b,
+            "account_a": account_a,
+            "account_b": account_b,
+        }
     finally:
         await admin.close()
+        maint = await _maintenance_conn(pg_cluster)
+        try:
+            await maint.execute(f'drop database "{dbname}"')
+        finally:
+            await maint.close()
 
 
 async def test_user_sees_only_their_own_account(pg_cluster, seeded_db):
-    conn = await _authenticated_conn(pg_cluster)
+    conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
         async with conn.transaction():
             await conn.execute(
@@ -125,7 +154,7 @@ async def test_user_sees_only_their_own_account(pg_cluster, seeded_db):
 
 
 async def test_cross_user_read_returns_zero_rows_for_the_other_users_data(pg_cluster, seeded_db):
-    conn = await _authenticated_conn(pg_cluster)
+    conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
         async with conn.transaction():
             await conn.execute(
@@ -141,7 +170,7 @@ async def test_cross_user_read_returns_zero_rows_for_the_other_users_data(pg_clu
 
 async def test_crafted_jwt_for_a_nonexistent_user_sees_nothing(pg_cluster, seeded_db):
     """Security-Model.md: cross-user reads return zero rows even with crafted JWTs."""
-    conn = await _authenticated_conn(pg_cluster)
+    conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
         async with conn.transaction():
             await conn.execute(
@@ -156,7 +185,7 @@ async def test_crafted_jwt_for_a_nonexistent_user_sees_nothing(pg_cluster, seede
 
 
 async def test_users_profile_is_scoped_by_its_own_id(pg_cluster, seeded_db):
-    conn = await _authenticated_conn(pg_cluster)
+    conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
         async with conn.transaction():
             await conn.execute(
@@ -169,7 +198,7 @@ async def test_users_profile_is_scoped_by_its_own_id(pg_cluster, seeded_db):
 
 
 async def test_insert_with_another_users_id_is_rejected(pg_cluster, seeded_db):
-    conn = await _authenticated_conn(pg_cluster)
+    conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
         with pytest.raises(asyncpg.PostgresError, match="row-level security"):
             async with conn.transaction():
@@ -188,7 +217,7 @@ async def test_insert_with_another_users_id_is_rejected(pg_cluster, seeded_db):
 
 
 async def test_reference_table_is_readable_by_anyone_but_not_writable(pg_cluster, seeded_db):
-    conn = await _authenticated_conn(pg_cluster)
+    conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
         rows = await conn.fetch("select ticker from public.prices")
         assert [r["ticker"] for r in rows] == ["XEQT"]
