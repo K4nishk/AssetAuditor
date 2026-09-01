@@ -52,6 +52,7 @@ Every branch is reviewed by CodeRabbit **before** its PR opens (`coderabbit revi
 
 `ops/orchestrator.sh` runs this loop in tmux against the Linear queue. If you are an agent inside it:
 - **No credentials exist on that machine** — no Supabase project, no Vercel token, no Groq key, no GPU box, and no `curl`. Write the code, config, migrations and runbook; prove what you can locally against PostgreSQL and the fixtures; then **state plainly in your summary what is unverified**. Never fake a passing test and never invent a credential.
+- **You have no network, and dependencies are pre-provisioned.** `uv sync` has already populated `.venv` from `pyproject.toml`/`uv.lock`, and `frontend/node_modules` is already installed. Use them — `uv run pytest`, `uv run ruff check .`, `npm run build` all work offline. **Do not try to install anything**: `uv add`, `pip install`, and `npm install` all need a network you don't have, and a failed install can leave the lockfile inconsistent for every agent after you. If your issue genuinely needs a package that isn't installed, do not work around it silently — implement what you can, say so explicitly in your summary, and name the missing package so the owner can add it between runs.
 - Keep `ops/` state files out of commits (`.gitignore` already lists them). Removing those lines breaks the run's memory across issues.
 - Scope discipline matters more than usual: nobody is watching, and an out-of-scope refactor lands in someone else's stacked PR.
 

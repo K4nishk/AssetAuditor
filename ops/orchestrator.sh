@@ -275,6 +275,19 @@ cr_blocking_count() {
 }
 
 # Sets: CR_STATUS (clean|resolved|escalated|unavailable), CR_SUMMARY, CR_ESCALATED
+# The `complete` event carries the authoritative finding count. Severity-based
+# counting alone can report "0 blocking" for a review that raised findings whose
+# shape we failed to classify — which would print "clean" on a PR that is not.
+cr_total_findings() {
+  local f="$1" n norm
+  n=$(jq -sr '[.[] | select(.type=="complete") | .findings] | last // empty' "$f" 2>/dev/null)
+  n=$(printf '%s' "${n:-}" | head -1 | tr -dc '0-9')
+  [ -n "$n" ] && { echo "$n"; return 0; }
+  norm=$(cr_normalise "$f")
+  n=$(printf '%s' "${norm:-[]}" | jq 'length' 2>/dev/null | head -1 | tr -dc '0-9')
+  echo "${n:-0}"
+}
+
 coderabbit_gate() {
   local identifier="$1" issue_uuid="$2" base_ref="$3" title="$4"
   CR_STATUS="clean"; CR_SUMMARY=""; CR_ESCALATED=""
@@ -315,8 +328,16 @@ coderabbit_gate() {
     log "$identifier: CodeRabbit round $round — $blocking blocking finding(s)."
 
     if [ "${blocking:-0}" -eq 0 ]; then
-      [ "$round" -eq 0 ] && CR_STATUS="clean" || CR_STATUS="resolved"
-      CR_SUMMARY="CodeRabbit: no blocking findings$([ "$round" -gt 0 ] && echo " after $round fix round(s)")."
+      local total; total=$(cr_total_findings "$findings")
+      if [ "${total:-0}" -gt 0 ]; then
+        # Findings exist but none classified blocking: real nits, or a severity shape
+        # we could not read. Either way this is not "clean" — say so on the PR.
+        CR_STATUS="advisory"
+        CR_SUMMARY="CodeRabbit reported **$total finding(s)**, none classified as blocking (${CR_BLOCKING//|/, })$([ "$round" -gt 0 ] && echo " after $round fix round(s)"). Read them before approving: \`ops/logs/$(basename "$findings")\`"
+      else
+        [ "$round" -eq 0 ] && CR_STATUS="clean" || CR_STATUS="resolved"
+        CR_SUMMARY="CodeRabbit: reviewed, no findings$([ "$round" -gt 0 ] && echo " after $round fix round(s)")."
+      fi
       return 0
     fi
 
@@ -450,7 +471,10 @@ cr_pr_followup() {
   local pr_number="$1" issue_uuid="$2"
   command -v coderabbit >/dev/null || return 0
   local out="$LOG_DIR/pr_${pr_number}_coderabbit.txt"
-  if coderabbit pullrequest "$pr_number" --agent > "$out" 2>&1 && [ -s "$out" ]; then
+  # --show-prompts is REQUIRED by this subcommand; --agent alone exits with a usage
+  # error (observed on PR #1). Also note CodeRabbit refuses closed PRs, so this is
+  # best-effort by design and never gates anything.
+  if coderabbit pullrequest "$pr_number" --show-prompts --agent > "$out" 2>&1 && [ -s "$out" ]; then
     comment_on_issue "$issue_uuid" "🐇 CodeRabbit PR review (#$pr_number) excerpt:
 \`\`\`
 $(head -c 3000 "$out")
@@ -647,6 +671,7 @@ $(echo "$output" | tail -30)
   case "$CR_STATUS" in
     clean)       cr_badge="✅ CodeRabbit: clean on first review." ;;
     resolved)    cr_badge="✅ CodeRabbit: blocking findings resolved before this PR opened." ;;
+    advisory)    cr_badge="📝 CodeRabbit: non-blocking findings recorded — read before approving." ;;
     escalated)   cr_badge="⚠️ CodeRabbit: findings escalated to Linear — read before approving." ;;
     unavailable) cr_badge="⛔ CodeRabbit did NOT review this branch. Treat as unreviewed." ;;
   esac
@@ -677,7 +702,7 @@ $CR_SUMMARY"
   echo "$identifier" >> "$STATE_FILE"
   log "$identifier done -> $pr_url"
 
-  local rep_icon="✅"; [ "$CR_STATUS" = "escalated" ] && rep_icon="⚠️"; [ "$CR_STATUS" = "unavailable" ] && rep_icon="⛔"
+  local rep_icon="✅"; [ "$CR_STATUS" = "advisory" ] && rep_icon="📝"; [ "$CR_STATUS" = "escalated" ] && rep_icon="⚠️"; [ "$CR_STATUS" = "unavailable" ] && rep_icon="⛔"
   report "- $rep_icon **$identifier** $title — $pr_url (base \`$base_branch\`) · CodeRabbit: $CR_STATUS$CR_ESCALATED"
 
   if [ -f "$REPO_DIR/CONTRACT_OUT.md" ]; then
