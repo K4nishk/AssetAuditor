@@ -51,6 +51,17 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
 python_version = "3.11"
 ignore_missing_imports = true
 
+# Pillow (transitive via pdfplumber) lazily imports numpy inside a few
+# PIL.Image function bodies; numpy's installed stub uses PEP 695 `type` alias
+# syntax that requires Python 3.12+ to parse, incompatible with this
+# project's `python_version = "3.11"` target (matches worker/Dockerfile's
+# python:3.11-slim) — mypy hard-crashes parsing the stub rather than
+# reporting a normal type error. Skip following into Pillow entirely; we
+# never need its inferred types.
+[[tool.mypy.overrides]]
+module = ["PIL", "PIL.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
