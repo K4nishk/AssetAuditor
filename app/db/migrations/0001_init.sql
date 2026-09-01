@@ -187,7 +187,8 @@ create policy accounts_tenant_isolation on public.accounts
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.accounts to authenticated;
+-- Silver writes are worker-only so they can be committed with their OpenLineage event.
+grant select on public.accounts to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- account_number_vault — pgsodium-encrypted mapping table for real account
@@ -241,7 +242,7 @@ create policy holdings_tenant_isolation on public.holdings
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.holdings to authenticated;
+grant select on public.holdings to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- lots — per-lot buys (Questrade) / vested-flag tranches (ESOP).
@@ -269,7 +270,7 @@ create policy lots_tenant_isolation on public.lots
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.lots to authenticated;
+grant select on public.lots to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- transactions — native currency + converted-CAD snapshot columns, per
@@ -303,7 +304,7 @@ create policy transactions_tenant_isolation on public.transactions
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.transactions to authenticated;
+grant select on public.transactions to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- liabilities — mortgages, lines of credit, loans.
@@ -330,7 +331,7 @@ create policy liabilities_tenant_isolation on public.liabilities
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.liabilities to authenticated;
+grant select on public.liabilities to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- room_events — TFSA/RRSP/FHSA ledger; vocab per Contribution-Rooms.md and
@@ -417,7 +418,8 @@ create policy networth_snapshots_tenant_isolation on public.networth_snapshots
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.networth_snapshots to authenticated;
+-- Gold rebuilds are worker-only so their writes cannot bypass lineage emission.
+grant select on public.networth_snapshots to authenticated;
 
 create table public.term_buckets (
     id uuid primary key default gen_random_uuid(),
@@ -440,7 +442,7 @@ create policy term_buckets_tenant_isolation on public.term_buckets
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.term_buckets to authenticated;
+grant select on public.term_buckets to authenticated;
 
 create table public.diversification_cuts (
     id uuid primary key default gen_random_uuid(),
@@ -464,7 +466,7 @@ create policy diversification_cuts_tenant_isolation on public.diversification_cu
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
-grant select, insert, update, delete on public.diversification_cuts to authenticated;
+grant select on public.diversification_cuts to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- prices — shared market data, not user-scoped. RLS stays on (Supabase
@@ -485,7 +487,7 @@ alter table public.prices enable row level security;
 
 create policy prices_read on public.prices
     for select
-    using (true);
+    using (auth.uid() is not null);
 
 grant select on public.prices to authenticated;
 
@@ -503,6 +505,6 @@ alter table public.worker_heartbeat enable row level security;
 
 create policy worker_heartbeat_read on public.worker_heartbeat
     for select
-    using (true);
+    using (auth.uid() is not null);
 
 grant select on public.worker_heartbeat to authenticated;

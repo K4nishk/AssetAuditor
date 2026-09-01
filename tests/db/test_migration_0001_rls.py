@@ -22,7 +22,8 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-MIGRATION_SQL = Path("app/db/migrations/0001_init.sql").read_text()
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MIGRATION_SQL = (REPO_ROOT / "app/db/migrations/0001_init.sql").read_text()
 MIGRATION_SQL_LOCAL = MIGRATION_SQL.replace("create extension if not exists pgsodium;\n", "")
 
 AUTH_STUB_SQL = """
@@ -200,15 +201,15 @@ async def test_users_profile_is_scoped_by_its_own_id(pg_cluster, seeded_db):
 async def test_insert_with_another_users_id_is_rejected(pg_cluster, seeded_db):
     conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
-        with pytest.raises(asyncpg.PostgresError, match="row-level security"):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError, match="row-level security"):
             async with conn.transaction():
                 await conn.execute(
                     "select set_config('request.jwt.claim.sub', $1, true)", str(seeded_db["user_a"])
                 )
                 await conn.execute(
                     """
-                    insert into public.accounts (user_id, institution, account_type)
-                    values ($1, 'kraken', 'crypto')
+                    insert into public.bronze_files (user_id, sha256, blob_url)
+                    values ($1, 'cross-tenant-sha', 'https://example.invalid/cross-tenant')
                     """,
                     seeded_db["user_b"],
                 )
@@ -216,13 +217,21 @@ async def test_insert_with_another_users_id_is_rejected(pg_cluster, seeded_db):
         await conn.close()
 
 
-async def test_reference_table_is_readable_by_anyone_but_not_writable(pg_cluster, seeded_db):
+async def test_reference_table_is_readable_by_authenticated_user_but_not_writable(
+    pg_cluster, seeded_db
+):
     conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
     try:
-        rows = await conn.fetch("select ticker from public.prices")
+        assert await conn.fetch("select ticker from public.prices") == []
+
+        async with conn.transaction():
+            await conn.execute(
+                "select set_config('request.jwt.claim.sub', $1, true)", str(seeded_db["user_a"])
+            )
+            rows = await conn.fetch("select ticker from public.prices")
         assert [r["ticker"] for r in rows] == ["XEQT"]
 
-        with pytest.raises(asyncpg.PostgresError):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await conn.execute(
                 """
                 insert into public.prices (ticker, date, close, source)

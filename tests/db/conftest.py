@@ -38,11 +38,6 @@ def pg_cluster():
             "--auth=trust",
             "--no-sync",
             "--locale=C",
-            # The sandbox blocks SysV shmget(); mmap-based shared memory avoids it.
-            "-c",
-            "shared_memory_type=mmap",
-            "-c",
-            "dynamic_shared_memory_type=posix",
             "-D",
             str(data_dir),
         ],
@@ -50,6 +45,7 @@ def pg_cluster():
         text=True,
     )
     if init.returncode != 0:
+        shutil.rmtree(base, ignore_errors=True)
         pytest.skip(f"initdb failed: {init.stderr}")
 
     start = subprocess.run(
@@ -62,6 +58,8 @@ def pg_cluster():
             str(log_path),
             "-w",
             "-o",
+            # The sandbox blocks SysV shmget(); mmap-based shared memory avoids it.
+            f"-c shared_memory_type=mmap -c dynamic_shared_memory_type=posix "
             f"-c listen_addresses='' -c unix_socket_directories='{base}'",
         ],
         capture_output=True,
@@ -69,6 +67,11 @@ def pg_cluster():
     )
     if start.returncode != 0:
         log = log_path.read_text() if log_path.exists() else ""
+        subprocess.run(
+            ["pg_ctl", "stop", "-D", str(data_dir), "-m", "immediate"],
+            capture_output=True,
+        )
+        shutil.rmtree(base, ignore_errors=True)
         pytest.skip(f"pg_ctl start failed: {start.stderr}\n{log}")
 
     try:
