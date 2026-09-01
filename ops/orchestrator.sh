@@ -22,12 +22,31 @@
 
 set -uo pipefail
 
+# ---- Self-relocation ---------------------------------------------------------
+# This script mutates the very worktree it lives in: run_issue() runs
+# `git reset --hard`, `git clean -fd` and `git checkout -B`, all of which replace
+# ops/*.sh with whatever version the target branch happens to carry — while bash
+# is still reading this file incrementally. That silently runs a different script
+# than the one you launched, and deletes outright any ops script not yet committed
+# on that branch. Re-exec from a copy outside the repo so the running code can
+# never change underneath us. State (logs, queue, contracts) stays in the real
+# repo via AA_REAL_OPS; all of it is gitignored, so `git clean -fd` spares it.
+if [ "${AA_RELOCATED:-0}" != "1" ] && [ "${ORCHESTRATOR_LIB_ONLY:-0}" != "1" ]; then
+  _src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _run="${TMPDIR:-/tmp}/aa-ops-$$"
+  mkdir -p "$_run" && cp "$_src"/*.sh "$_run"/ 2>/dev/null
+  export AA_RELOCATED=1 AA_REAL_OPS="$_src"
+  export REPO_DIR="${REPO_DIR:-$(cd "$_src/.." && pwd)}"
+  exec bash "$_run/$(basename "${BASH_SOURCE[0]}")" "$@"
+fi
+
 OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_HOME="${AA_REAL_OPS:-$OPS_DIR}"   # state lives in the repo, code may not
 REPO_DIR="${REPO_DIR:-$(cd "$OPS_DIR/.." && pwd)}"
-QUEUE_FILE="${QUEUE_FILE:-$OPS_DIR/queue.tsv}"
-LOG_DIR="$OPS_DIR/logs"
-STATE_FILE="$OPS_DIR/.completed_issues"
-CONTRACTS_FILE="$OPS_DIR/.agent_contracts.md"
+QUEUE_FILE="${QUEUE_FILE:-$STATE_HOME/queue.tsv}"
+LOG_DIR="$STATE_HOME/logs"
+STATE_FILE="$STATE_HOME/.completed_issues"
+CONTRACTS_FILE="$STATE_HOME/.agent_contracts.md"
 REPORT_FILE="$LOG_DIR/NIGHT_REPORT.md"
 
 MAX_TURNS="${MAX_TURNS:-120}"
@@ -75,6 +94,60 @@ LAST_ISSUE="${SEED_LAST_ISSUE:-upstream}"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 report() { echo "$*" >> "$REPORT_FILE"; }
 
+# ---- Review-debt ledger ------------------------------------------------------
+# CodeRabbit's free tier allows 8 reviews per replenishing window — far fewer than
+# this queue needs. Development must NEVER wait on it, so when the quota runs out
+# we bank the unfinished review as debt and carry on. ops/review_sweeper.sh, run
+# hourly by launchd, settles the debt when quota returns. Columns:
+#   pr  branch  linear_id  state  recorded_epoch  attempts
+# state: never_reviewed | unverified   (unverified = reviewed and fixed once, but
+# the confirming re-review never ran, so the fixes are unconfirmed)
+REVIEW_DEBT="$STATE_HOME/.review_debt.tsv"
+
+# state: never_reviewed | unverified | reviewed_pending_fix
+# reviewed_pending_fix means CodeRabbit HAS reviewed and its findings are saved in
+# column 7 — only the Claude-powered fixer is outstanding. A later sweep reuses
+# those findings instead of spending another review on the same branch.
+record_review_debt() {
+  local pr="$1" branch="$2" issue="$3" state="$4" findings="${5:-}"
+  touch "$REVIEW_DEBT"
+  awk -F'\t' -v b="$branch" '$2 != b' "$REVIEW_DEBT" > "$REVIEW_DEBT.tmp" 2>/dev/null
+  mv -f "$REVIEW_DEBT.tmp" "$REVIEW_DEBT" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\t%s\t0\t%s\n' "$pr" "$branch" "$issue" "$state" "$(date +%s)" "$findings" >> "$REVIEW_DEBT"
+  log "$issue: review debt recorded ($state) — the hourly sweeper will settle it."
+}
+
+# ---- Worktree lock -----------------------------------------------------------
+# The hourly launchd sweeper and the tmux orchestrator share ONE git worktree and
+# both run `git reset --hard` / `git checkout -B`. Without this, a sweep landing
+# mid-issue would yank the branch out from under a running agent and commit its
+# work onto the wrong branch. Whoever holds this lock owns the worktree.
+WORKTREE_LOCK="$STATE_HOME/.worktree.lock"
+
+acquire_worktree() {
+  local max="${1:-900}" waited=0 age
+  while ! mkdir "$WORKTREE_LOCK" 2>/dev/null; do
+    age=$(( $(date +%s) - $(stat -f %m "$WORKTREE_LOCK" 2>/dev/null || echo 0) ))
+    if [ "$age" -gt 3600 ]; then
+      log "Stale worktree lock (${age}s) — reclaiming."
+      rm -rf "$WORKTREE_LOCK" 2>/dev/null; continue
+    fi
+    if [ "$waited" -ge "$max" ]; then return 1; fi
+    sleep 10; waited=$((waited+10))
+  done
+  date +%s > "$WORKTREE_LOCK/since" 2>/dev/null
+  return 0
+}
+
+release_worktree() { rm -rf "$WORKTREE_LOCK" 2>/dev/null; }
+
+clear_review_debt() {
+  local branch="$1"
+  [ -f "$REVIEW_DEBT" ] || return 0
+  awk -F'\t' -v b="$branch" '$2 != b' "$REVIEW_DEBT" > "$REVIEW_DEBT.tmp" 2>/dev/null \
+    && mv -f "$REVIEW_DEBT.tmp" "$REVIEW_DEBT" 2>/dev/null
+}
+
 # ---- Preflight ---------------------------------------------------------------
 # Fail loudly at 22:00 rather than silently at 03:00 with eight broken branches.
 
@@ -102,12 +175,33 @@ preflight() {
 
   # Integration-test dependencies. Not fatal: agents are told what is unavailable
   # and must say so in their summary rather than faking a passing test.
-  if ! pg_isready -q 2>/dev/null; then
-    log "WARN: PostgreSQL not accepting connections. Attempting to start..."
-    pg_ctl -D "$(brew --prefix 2>/dev/null)/var/postgresql@16" start >/dev/null 2>&1 \
-      || brew services start postgresql@16 >/dev/null 2>&1 || true
+  # `pg_isready` with no host probes the UNIX SOCKET in /tmp, which a Postgres
+  # running in Docker never creates — it publishes TCP only. Checking the socket
+  # alone reports "no PostgreSQL" against a perfectly healthy container, and every
+  # agent would then skip its DB tests for no reason. Probe both transports, and
+  # when only TCP answers, export PGHOST so psql/asyncpg in the agents connect there.
+  pg_available() {
+    pg_isready -q 2>/dev/null && return 0
+    if pg_isready -q -h localhost -p 5432 2>/dev/null; then export PGHOST=localhost; return 0; fi
+    return 1
+  }
+
+  if ! pg_available; then
+    log "WARN: PostgreSQL not accepting connections. Attempting to start as the current user..."
+    # Deliberately NOT `brew services start`: if that ever runs under sudo it
+    # registers a ROOT LaunchDaemon, and PostgreSQL refuses to execute as root —
+    # producing an invisible crash-restart loop (seen 2026-08-31, a 900KB log of
+    # '"root" execution of the PostgreSQL server is not permitted'). Start it
+    # directly as this user, logging somewhere this user can definitely write.
+    pg_ctl -D "$(brew --prefix 2>/dev/null)/var/postgresql@16" \
+           -l "$LOG_DIR/postgres.log" start >/dev/null 2>&1 || true
     sleep 3
-    pg_isready -q 2>/dev/null && log "PostgreSQL is up." || log "WARN: no local PostgreSQL — DB-backed issues will note unverified work."
+    if pg_available; then
+      log "PostgreSQL is up${PGHOST:+ (TCP at $PGHOST:5432)}."
+    else
+      log "WARN: no local PostgreSQL — DB-backed issues will write code and tests but report them unverified."
+      log "      If a root LaunchDaemon is crash-looping, clear it: sudo launchctl bootout system/homebrew.mxcl.postgresql@16"
+    fi
   fi
   docker info >/dev/null 2>&1 || log "WARN: Docker daemon not running — container-dependent work will be written but not run."
   local node_major
@@ -214,6 +308,19 @@ extract_reset_epoch() {
 # "rate limit" false-positives on any issue that is *about* rate limiting — in
 # Aegis that threw away two successful runs and slept 5h each time. AssetAuditor
 # has AA-16 (LiteLLM rate caps), which would trip exactly that bug.
+# A spend cap is NOT a rate limit: no amount of sleeping fixes it, and the run must
+# stop dead. On 2026-09-01 this exact case ("You've hit your org's monthly spend
+# limit") fell through to the generic failure path and burned 19 queued issues in
+# seven minutes — each cut a branch, failed in ~20s, and got pushed to Backlog in
+# Linear. One halt is worth more than nineteen false failures.
+is_spend_capped() {
+  local logfile="$1"
+  [ -f "$logfile" ] || return 1
+  [ "$(jq -r '.is_error // false' "$logfile" 2>/dev/null)" = "true" ] || return 1
+  jq -r '.result // ""' "$logfile" 2>/dev/null \
+    | grep -qiE "spend limit|spending limit|insufficient credit|billing limit|raise it at claude\.ai/settings"
+}
+
 is_rate_limited() {
   local logfile="$1"
   [ -f "$logfile" ] || return 1
@@ -248,13 +355,30 @@ run_agent() {
 # "zero findings" — that would let unreviewed code masquerade as clean.
 cr_normalise() {
   local f="$1"
-  # -s (slurp) ALWAYS, not just for NDJSON: it collapses one-or-many JSON documents
-  # into exactly one array. Running plain `jq` over an NDJSON file emits one result
-  # per document, so the count downstream came back as "1\n0" and blew up the
-  # caller's integer test. One input shape in, one array out.
-  jq -sc '[.[] | .. | objects
-          | select((has("severity") or has("level") or has("priority"))
-                   and (has("message") or has("title") or has("description")))]' "$f" 2>/dev/null
+  # `grep '^{'` first: CodeRabbit appends plain-text lines (e.g. "Error: Rate limit
+  # exceeded") after its NDJSON, which makes jq fail on the whole file.
+  # -s (slurp) ALWAYS: collapses one-or-many JSON documents into exactly one array,
+  # so NDJSON does not emit one result per line (that produced "1\n0" and blew up
+  # the caller's integer test).
+  # The select() must match CodeRabbit's REAL finding shape, observed on KCH-47:
+  #   {"type":"finding","severity":"major","fileName":...,"codegenInstructions":...}
+  # There is no message/title/description field, so the old filter matched nothing
+  # and every count silently fell through to grepping for the word "major".
+  grep '^{' "$f" 2>/dev/null | jq -sc '[.[] | .. | objects
+          | select(.type == "finding"
+                   or ((has("severity") or has("level") or has("priority"))
+                       and (has("message") or has("title") or has("description")
+                            or has("codegenInstructions"))))]' 2>/dev/null
+}
+
+# CodeRabbit's OWN quota, distinct from ours: the free plan includes 8 reviews that
+# replenish over minutes. Observed on KCH-47 round 1, where it silently downgraded a
+# fully-reviewed-and-fixed branch to "unreviewed". It is recoverable — wait and retry.
+cr_is_rate_limited() {
+  local f="$1"
+  [ -f "$f" ] || return 1
+  grep -q '"errorType":"rate_limit"' "$f" 2>/dev/null \
+    || grep -qi "rate limit exceeded" "$f" 2>/dev/null
 }
 
 cr_blocking_count() {
@@ -290,21 +414,36 @@ cr_total_findings() {
 
 coderabbit_gate() {
   local identifier="$1" issue_uuid="$2" base_ref="$3" title="$4"
-  CR_STATUS="clean"; CR_SUMMARY=""; CR_ESCALATED=""
+  CR_STATUS="clean"; CR_SUMMARY=""; CR_ESCALATED=""; CR_QUOTA_HIT=0
 
   if ! command -v coderabbit >/dev/null; then
     CR_STATUS="unavailable"; CR_SUMMARY="CodeRabbit CLI not installed — this branch was NOT machine-reviewed."
     return 0
   fi
 
-  local round=0 findings blocking sleep_guard=0
+  local round=0 findings blocking sleep_guard=0 saw_findings=0
   while [ "$round" -le "$CR_MAX_ROUNDS" ]; do
     findings="$LOG_DIR/${identifier}_coderabbit_r${round}.json"
-    log "$identifier: CodeRabbit review (round $round) against $base_ref..."
-    # -c CLAUDE.md gives the reviewer the project's standards, so findings land in
-    # AssetAuditor's terms (provenance, masking, Decimal, raw-SQL discipline).
-    coderabbit review --agent --committed --base "$base_ref" -c CLAUDE.md > "$findings" 2>&1
-    local cr_exit=$?
+    local cr_exit=0 rl_wait=0
+    while :; do
+      log "$identifier: CodeRabbit review (round $round) against $base_ref..."
+      # -c CLAUDE.md gives the reviewer the project's standards, so findings land in
+      # AssetAuditor's terms (provenance, masking, Decimal, raw-SQL discipline).
+      coderabbit review --agent --committed --base "$base_ref" -c CLAUDE.md > "$findings" 2>&1
+      cr_exit=$?
+      cr_is_rate_limited "$findings" || break
+      # Free tier by choice: CodeRabbit's quota is expected to run out, and blocking
+      # the build on it would idle the queue for hours. Default CR_RL_MAX_WAITS=0 —
+      # do not wait at all, bank the debt and let the hourly sweeper settle it.
+      rl_wait=$((rl_wait+1))
+      if [ "$rl_wait" -gt "${CR_RL_MAX_WAITS:-0}" ]; then
+        log "$identifier: CodeRabbit free-tier quota exhausted. NOT waiting — deferring review to the hourly sweeper."
+        CR_QUOTA_HIT=1
+        break
+      fi
+      log "$identifier: CodeRabbit quota exhausted; waiting ${CR_RL_WAIT_SECS:-90}s, retry $rl_wait..."
+      sleep "${CR_RL_WAIT_SECS:-90}"
+    done
 
     # A non-zero exit is ambiguous: some review CLIs exit non-zero precisely BECAUSE
     # they found issues. So only call it unavailable when the output also carries
@@ -316,15 +455,39 @@ coderabbit_gate() {
       shape=$(cr_normalise "$findings")
       textsev=$(grep -ciE "(${CR_BLOCKING})" "$findings" 2>/dev/null || true)
       if { [ -z "$shape" ] || [ "$shape" = "[]" ]; } && [ "${textsev:-0}" -eq 0 ]; then
-        log "$identifier: CodeRabbit failed to run (exit $cr_exit, no parseable findings)."
-        CR_STATUS="unavailable"
-        CR_SUMMARY="CodeRabbit could not run (exit $cr_exit). This branch was **NOT machine-reviewed** — review it by hand. Output: \`ops/logs/$(basename "$findings")\`"
+        # Quota exhaustion is not a failure — it is expected on the free tier, and
+        # the review is deferred rather than skipped. The debt ledger is what makes
+        # that a promise instead of a hole.
+        if [ "${CR_QUOTA_HIT:-0}" = "1" ]; then
+          if [ "$saw_findings" -eq 1 ]; then
+            CR_STATUS="deferred_unverified"
+            CR_SUMMARY="CodeRabbit reviewed this branch and its blocking findings were fixed, but the confirming re-review hit the free-tier quota. **Queued for the hourly review sweeper** — it will re-review, and any new findings are fixed and reported back here automatically."
+          else
+            CR_STATUS="deferred"
+            CR_SUMMARY="CodeRabbit's free-tier quota was exhausted before this branch could be reviewed. Development did not wait. **Queued for the hourly review sweeper** — it will review, fix what it can, and comment here with anything escalated."
+          fi
+          return 0
+        fi
+        if [ "$saw_findings" -eq 1 ]; then
+          # An earlier round DID review this branch and its findings were fixed; only
+          # the confirmation pass failed. That is a very different thing from
+          # "never reviewed", and conflating them sent the owner hunting through a
+          # PR that had in fact been reviewed and corrected (KCH-47 / PR #7).
+          log "$identifier: earlier rounds reviewed and fixes were applied; verification pass unavailable (exit $cr_exit)."
+          CR_STATUS="unverified"
+          CR_SUMMARY="CodeRabbit reviewed this branch and its blocking findings were fixed, but the **verification re-review could not run** ($(cr_is_rate_limited "$findings" && echo "CodeRabbit's own review quota was exhausted" || echo "exit $cr_exit")). The fixes are unconfirmed by a second pass — worth a closer look, but this branch was not left unreviewed. Output: \`ops/logs/$(basename "$findings")\`"
+        else
+          log "$identifier: CodeRabbit failed to run (exit $cr_exit, no parseable findings)."
+          CR_STATUS="unavailable"
+          CR_SUMMARY="CodeRabbit could not run (exit $cr_exit$(cr_is_rate_limited "$findings" && echo "; its own review quota was exhausted")). This branch was **NOT machine-reviewed** — review it by hand. Output: \`ops/logs/$(basename "$findings")\`"
+        fi
         return 0
       fi
       log "$identifier: CodeRabbit exited $cr_exit but produced findings; continuing with the gate."
     fi
 
     blocking=$(cr_blocking_count "$findings")
+    [ "${blocking:-0}" -gt 0 ] && saw_findings=1
     log "$identifier: CodeRabbit round $round — $blocking blocking finding(s)."
 
     if [ "${blocking:-0}" -eq 0 ]; then
@@ -502,6 +665,12 @@ run_issue() {
 
   cd "$REPO_DIR" || { log "ERROR: REPO_DIR not found"; return 2; }
 
+  # Own the worktree for this whole issue — the hourly sweeper shares it.
+  if ! acquire_worktree 1800; then
+    log "$identifier: could not acquire the worktree lock (sweeper busy?) — retrying next pass."
+    return 2
+  fi
+
   # Agents routinely leave uncommitted edits behind. Without wiping them the
   # checkout below fails, and since we don't run with `set -e` the script would
   # carry on and cut this issue's branch off the *previous* issue's branch.
@@ -525,12 +694,12 @@ run_issue() {
 
   if ! git checkout -B "$branch" "$base_ref" --quiet; then
     log "ERROR: could not cut $branch from $base_ref. Skipping $identifier."
-    return 2
+    release_worktree; return 2
   fi
   local on_branch; on_branch=$(git rev-parse --abbrev-ref HEAD)
   if [ "$on_branch" != "$branch" ]; then
     log "ERROR: expected HEAD on $branch but it is $on_branch. Skipping $identifier."
-    return 2
+    release_worktree; return 2
   fi
 
   set_issue_state "$issue_uuid" "In Progress"
@@ -549,7 +718,9 @@ $(cat "$CONTRACTS_FILE")
   fi
 
   local pg_note="PostgreSQL is NOT available locally; write DB code and tests but say plainly in your summary what could not be executed."
-  pg_isready -q 2>/dev/null && pg_note="PostgreSQL 16 is on localhost:5432 (superuser '$(whoami)'); create your own scratch database. Prefer a real integration test over mocking for DB behaviour."
+  if pg_isready -q 2>/dev/null || pg_isready -q -h localhost -p 5432 2>/dev/null; then
+    pg_note="PostgreSQL 16 is reachable on localhost:5432 (superuser '$(whoami)'${PGHOST:+, TCP — PGHOST is already exported for you}); create your own scratch database. Prefer a real integration test over mocking for DB behaviour."
+  fi
 
   local prompt="You are implementing Linear issue $identifier: $title
 
@@ -596,6 +767,16 @@ Your work will be reviewed by CodeRabbit before a PR is opened. Write it to surv
   local exit_code=$?
   local output; output=$(cat "$logfile")
 
+  # Check the spend cap FIRST: it is terminal, whereas a rate limit is just a wait.
+  if is_spend_capped "$logfile"; then
+    log "*** SPEND CAP REACHED on $identifier — halting the run. ***"
+    log "*** $(jq -r '.result // ""' "$logfile" 2>/dev/null | head -1) ***"
+    comment_on_issue "$issue_uuid" "⛔ Run halted: the account's spend limit was reached before this issue could be implemented. No work was done; the issue is untouched and will be retried on the next run."
+    set_issue_state "$issue_uuid" "Backlog"
+    report "- ⛔ **$identifier** — run HALTED here: spend limit reached. This issue and everything after it are untouched and will retry."
+    release_worktree; return 3
+  fi
+
   if is_rate_limited "$logfile"; then
     log "Hit usage limit while working on $identifier."
     local resume_epoch; resume_epoch=$(extract_reset_epoch "$output")
@@ -606,6 +787,7 @@ Your work will be reviewed by CodeRabbit before a PR is opened. Write it to surv
     log "Sleeping $((wait_secs/60)) minutes until the window resets..."
     comment_on_issue "$issue_uuid" "⏸️ Agent paused: usage limit reached. Auto-resuming this issue after the window resets."
     sleep "$wait_secs"
+    release_worktree
     return 1  # caller retries this same issue
   fi
 
@@ -617,7 +799,7 @@ $(echo "$output" | tail -30)
 \`\`\`"
     set_issue_state "$issue_uuid" "Backlog"
     report "- ❌ **$identifier** — agent failed (exit $exit_code). Log: \`ops/logs/$(basename "$logfile")\`"
-    return 2
+    release_worktree; return 2
   fi
 
   # Agents sometimes create a branch of their own and commit there. Pushing
@@ -628,7 +810,7 @@ $(echo "$output" | tail -30)
     comment_on_issue "$issue_uuid" "⚠️ Agent committed on \`$head_after\` instead of \`$branch\`. Work is local only; no PR opened."
     set_issue_state "$issue_uuid" "Backlog"
     report "- ❌ **$identifier** — agent committed on the wrong branch (\`$head_after\`). Nothing pushed."
-    return 2
+    release_worktree; return 2
   fi
 
   if ! git log "$base_ref".."$branch" --oneline | grep -q .; then
@@ -636,7 +818,7 @@ $(echo "$output" | tail -30)
     set_issue_state "$issue_uuid" "Backlog"
     comment_on_issue "$issue_uuid" "⚠️ Agent run completed but produced no commits. Needs a human look."
     report "- ❌ **$identifier** — no commits produced."
-    return 2
+    release_worktree; return 2
   fi
 
   # ---- CodeRabbit gate before anything is pushed ----
@@ -648,7 +830,7 @@ $(echo "$output" | tail -30)
     comment_on_issue "$issue_uuid" "⛔ Held back: CodeRabbit could not review this branch and CR_REQUIRED=1. Work is committed locally on \`$branch\`."
     set_issue_state "$issue_uuid" "Backlog"
     report "- ⛔ **$identifier** — held: CodeRabbit unavailable, nothing pushed."
-    return 2
+    release_worktree; return 2
   fi
 
   # The mediator commits its own fixes, but may leave an edit unstaged. `add -u`
@@ -672,6 +854,9 @@ $(echo "$output" | tail -30)
     clean)       cr_badge="✅ CodeRabbit: clean on first review." ;;
     resolved)    cr_badge="✅ CodeRabbit: blocking findings resolved before this PR opened." ;;
     advisory)    cr_badge="📝 CodeRabbit: non-blocking findings recorded — read before approving." ;;
+    unverified)  cr_badge="🔁 CodeRabbit reviewed and its findings were fixed, but the verification re-review could not run." ;;
+    deferred)    cr_badge="⏳ CodeRabbit's free-tier quota was exhausted — review DEFERRED to the hourly sweeper, not skipped." ;;
+    deferred_unverified) cr_badge="⏳ Reviewed and fixed once; the confirming re-review is DEFERRED to the hourly sweeper." ;;
     escalated)   cr_badge="⚠️ CodeRabbit: findings escalated to Linear — read before approving." ;;
     unavailable) cr_badge="⛔ CodeRabbit did NOT review this branch. Treat as unreviewed." ;;
   esac
@@ -692,6 +877,13 @@ _Spec: \`mvp.md\` ($identifier) · Architecture: \`docs/adr/ADR_v1.1.0.md\`_" \
     --base "$base_branch" --head "$branch" 2>&1 | tail -1)
 
   local pr_number; pr_number=$(basename "$pr_url")
+  # Bank any unfinished review now that the PR exists, so the sweeper can find it.
+  case "$CR_STATUS" in
+    deferred)            record_review_debt "$pr_number" "$branch" "$identifier" "never_reviewed" ;;
+    deferred_unverified) record_review_debt "$pr_number" "$branch" "$identifier" "unverified" ;;
+    unavailable)         record_review_debt "$pr_number" "$branch" "$identifier" "never_reviewed" ;;
+    unverified)          record_review_debt "$pr_number" "$branch" "$identifier" "unverified" ;;
+  esac
   post_merge_sequence "$pr_number"
   cr_pr_followup "$pr_number" "$issue_uuid"
 
@@ -702,7 +894,7 @@ $CR_SUMMARY"
   echo "$identifier" >> "$STATE_FILE"
   log "$identifier done -> $pr_url"
 
-  local rep_icon="✅"; [ "$CR_STATUS" = "advisory" ] && rep_icon="📝"; [ "$CR_STATUS" = "escalated" ] && rep_icon="⚠️"; [ "$CR_STATUS" = "unavailable" ] && rep_icon="⛔"
+  local rep_icon="✅"; [ "$CR_STATUS" = "advisory" ] && rep_icon="📝"; [ "$CR_STATUS" = "unverified" ] && rep_icon="🔁"; case "$CR_STATUS" in deferred|deferred_unverified) rep_icon="⏳";; esac; [ "$CR_STATUS" = "escalated" ] && rep_icon="⚠️"; [ "$CR_STATUS" = "unavailable" ] && rep_icon="⛔"
   report "- $rep_icon **$identifier** $title — $pr_url (base \`$base_branch\`) · CodeRabbit: $CR_STATUS$CR_ESCALATED"
 
   if [ -f "$REPO_DIR/CONTRACT_OUT.md" ]; then
@@ -715,10 +907,18 @@ $CR_SUMMARY"
   fi
 
   LAST_BRANCH="$branch"; LAST_ISSUE="$identifier"
+  release_worktree
   return 0
 }
 
 # ---- Main loop ---------------------------------------------------------------
+
+# Sourced as a library by ops/remediate_prs.sh, which reuses the Linear helpers,
+# the CodeRabbit parsers, run_agent and merge_sequence rather than duplicating
+# them. Returns when sourced; exits cleanly if someone runs it with the flag set.
+if [ "${ORCHESTRATOR_LIB_ONLY:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 preflight
 
@@ -742,6 +942,15 @@ while IFS=$'\t' read -r tier identifier parallel; do
   until run_issue "$identifier"; do
     rc=$?
     attempts=$((attempts+1))
+    if [ "$rc" -eq 3 ]; then
+      # Terminal account-level stop. Everything still queued is untouched and will
+      # be picked up verbatim on the next run — do not march through it failing.
+      log "Stopping the queue: spend limit reached. Remaining issues are untouched."
+      report ""
+      report "Run halted at $identifier — spend limit reached. $(grep -c . "$STATE_FILE") issue(s) completed in total; the rest will retry on the next run."
+      merge_sequence >> "$REPORT_FILE" 2>/dev/null
+      exit 2
+    fi
     if [ "$rc" -eq 2 ]; then
       log "$identifier needs a human, moving on (not retrying automatically)."
       failed=1; break
