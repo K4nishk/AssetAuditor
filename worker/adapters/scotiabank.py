@@ -134,6 +134,10 @@ def _transaction_draft(row: list[str | None], *, account_mask: str, year: int) -
 
     occurred_at = to_datetime_utc(_iso_date(date_str, year))
 
+    balance_after = _parse_money(balance)
+    if balance_after is None:
+        raise AdapterParseError(f"transaction row is missing a running balance: {row!r}")
+
     return StagedRowDraft(
         entity="transaction",
         payload={
@@ -143,7 +147,7 @@ def _transaction_draft(row: list[str | None], *, account_mask: str, year: int) -
             "currency": "CAD",
             "occurred_at": occurred_at.isoformat(),
             "description": description,
-            "balance_after": _parse_money(balance),
+            "balance_after": balance_after,
         },
     )
 
@@ -152,9 +156,12 @@ def _parse_money(value: str) -> Decimal | None:
     if not value:
         return None
     try:
-        return Decimal(value.replace(",", ""))
+        parsed = Decimal(value.replace(",", ""))
     except InvalidOperation as exc:
         raise AdapterParseError(f"not a decimal amount: {value!r}") from exc
+    if not parsed.is_finite():
+        raise AdapterParseError(f"not a finite decimal amount: {value!r}")
+    return parsed
 
 
 def _iso_date(value: str, year: int) -> str:
