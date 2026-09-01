@@ -1,108 +1,135 @@
-# ops/ — overnight build orchestration
+# ops/ — autonomous build & review orchestration
 
-Unattended agents implement Linear issues in dependency order, every branch passes a
-CodeRabbit gate before its PR opens, and **nothing merges without you**. You wake up to
-a stack of reviewed-by-machine, unreviewed-by-human PRs in a defined merge order, plus
-Linear issues for anything the agents could not service.
+Unattended agents implement Linear issues in dependency order and open stacked PRs.
+CodeRabbit reviews every branch. **Nothing merges without you.** Two launchd loops keep
+it running without supervision; you review PRs at your own pace.
 
 | File | Role |
 |---|---|
 | `bootstrap_repo.sh` | one-time: git repo, `main`/`development`, GitHub remote, branch protection |
 | `seed_linear.py` | parses `mvp.md` → creates Linear issues (idempotent) → writes `queue.tsv` |
-| `queue.template.tsv` | tier ordering derived from mvp.md's dependency spine |
-| `orchestrator.sh` | the overnight loop: implement → CodeRabbit gate → mediate → PR |
-| `logs/NIGHT_REPORT.md` | generated each run: what shipped, what escalated, merge order |
+| `validate_queue.py` | checks `queue.template.tsv` against mvp.md's declared dependencies |
+| `queue.template.tsv` | tier ordering derived from the dependency spine |
+| `orchestrator.sh` | the build loop: implement → CodeRabbit gate → mediate → PR. Also the shared library |
+| `run_builder.sh` | launchd entry point for autonomous development (guards + starts the orchestrator) |
+| `install_builder.sh` | installs/removes the 2-hourly build agent |
+| `review_sweeper.sh` | settles deferred CodeRabbit reviews from the debt ledger |
+| `install_sweeper.sh` | installs/removes the hourly review agent |
+| `remediate_prs.sh` | answers CodeRabbit's **PR comments** on open PRs, bottom-up, in place |
+
+State (all gitignored, all local): `.completed_issues` · `.review_debt.tsv` ·
+`.agent_contracts.md` · `.issue_map.tsv` · `queue.tsv` · `.env.local` · `logs/`
+
+## Rules learned the hard way — do not violate
+
+1. **Never launch with uncommitted changes in `ops/`.** The first `git reset --hard`
+   silently restores the last *committed* toolchain and deletes untracked scripts, so
+   every safety property added since vanishes without a word. This destroyed a full
+   session's work on 2026-09-01 and caused the KCH-51 failure.
+2. **Lock directories must stay in `.gitignore`.** `git clean -fd` removes untracked
+   *directories*, and `run_issue()` runs it two lines after taking `ops/.worktree.lock`
+   — an unignored lock deletes itself and mutual exclusion silently stops working.
+3. **Every worktree toucher takes `ops/.worktree.lock`.** Orchestrator, sweeper and
+   builder share one checkout. Two `git checkout`s at once move the branch under a
+   running agent.
+4. Both `orchestrator.sh` and `review_sweeper.sh` **re-exec from a copy in `$TMPDIR`**,
+   because they rewrite the worktree they live in. State stays in the repo via
+   `AA_REAL_OPS`. (This is also what let the scripts be recovered after they were
+   deleted mid-run — the relocated copy survived.)
 
 ## First run
 
 ```bash
-cd ~/Documents/Github/AssetAuditor
-gh auth login                      # current token is invalid — this is required
-coderabbit auth login              # the review gate depends on it
+gh auth login                      # needs scopes: repo, workflow
+coderabbit auth login
 ./ops/bootstrap_repo.sh
-
-export LINEAR_API_KEY=lin_api_...  # the same key the Aegis project uses
-export LINEAR_TEAM_KEY=ASA         # or whichever team you want AssetAuditor in
-python3 ops/seed_linear.py         # dry run — check the parse before writing anything
-python3 ops/seed_linear.py --apply # creates 32 issues, writes ops/queue.tsv
-export KILL_GATE_ISSUE=ASA-15      # the id seed_linear.py prints for AA-15
+export LINEAR_API_KEY=lin_api_...  # LINEAR_TEAM_KEY is the issue-id PREFIX (KCH), not the team name
+export LINEAR_TEAM_KEY=KCH
+python3 ops/seed_linear.py         # dry run first
+python3 ops/seed_linear.py --apply # creates issues, writes ops/queue.tsv, prints the kill-gate id
 ```
 
-## Every night
+Persist credentials in `ops/.env.local` (gitignored; both launchd agents source it):
 
 ```bash
-tmux new -s assetauditor
-export LINEAR_API_KEY=... LINEAR_TEAM_KEY=ASA KILL_GATE_ISSUE=ASA-15
-./ops/orchestrator.sh
-# ctrl-b, d to detach.  tmux attach -t assetauditor to look in.
+export LINEAR_API_KEY="lin_api_..."
+export LINEAR_TEAM_KEY=KCH
+export KILL_GATE_ISSUE=KCH-50
 ```
 
-The loop is resumable: completed issues are recorded in `ops/.completed_issues` and
-skipped on the next run, so a night that ends at tier 4 continues from tier 4.
+## Autonomous mode (recommended)
 
-Useful knobs (all optional): `IMPL_MODEL` / `MEDIATOR_MODEL` to pick models per role,
-`MAX_TURNS`, `MAX_BUDGET_USD`, `CR_MAX_ROUNDS` (default 2), `CR_REQUIRED=1` to refuse
-pushing when CodeRabbit cannot run, `SKIP_KILL_GATE=1` to continue past a failed gate.
+```bash
+./ops/install_sweeper.sh    # reviews: hourly at :07
+./ops/install_builder.sh    # builds:  every 2 hours at :22
+```
 
-## What happens per issue
+Both fire on wake and coalesce slots missed while asleep. `run_builder.sh` skips if a
+build is running, an issue is in flight, or the queue is done, and auto-detects the top
+of the stack so `SEED_LAST_BRANCH` never needs setting by hand. Keep the Mac plugged in;
+sleep delays work rather than losing it.
 
-1. **Branch** `feature/<linear-issue>` cut from the previous issue's branch if that is
-   still unmerged (stacked), otherwise from `development`.
-2. **Implement** — `claude -p` with an allowlisted toolset, the issue spec from Linear,
-   and the contracts published by earlier agents. It commits; it never pushes.
-3. **CodeRabbit gate** — `coderabbit review --agent --committed --base <base> -c CLAUDE.md`.
-   The `-c CLAUDE.md` is what gives the review project-wide judgement: it flags in
-   AssetAuditor's own terms (provenance, masking, `Decimal`, parameterized SQL, RLS).
-   Critical/major findings go back to the implementing agent, up to `CR_MAX_ROUNDS`
-   times, with an explicit instruction to fix the pattern rather than silence the rule.
-   Where the agent believes a finding is wrong, it writes its reasoning to `CR_DISPUTE.md`
-   instead of forcing a bad fix.
-4. **Mediation** — anything still blocking goes to a second `claude` agent acting as
-   mediator, which reads the code and rules on each finding: `fixed_now`, `escalate`,
-   `false_positive`, or `accepted_risk`. Escalations become **new Linear issues** linked
-   to the parent, for your morning triage.
-5. **PR** — pushed, opened against its stacked base, with the CodeRabbit verdict in the
-   body, a bottom-up merge-order comment, and CodeRabbit's own SaaS review pulled back
-   into the Linear thread. Linear moves to **In Review**. Nothing merges.
+Manual run of either loop:
+
+```bash
+caffeinate -ims ./ops/run_builder.sh
+./ops/review_sweeper.sh            # --status prints the debt ledger
+```
+
+Knobs: `MAX_BUDGET_USD` (per issue; builder defaults 12.00), `MAX_TURNS`, `IMPL_MODEL`,
+`MEDIATOR_MODEL`, `CR_MAX_ROUNDS` (2), `CR_RL_MAX_WAITS` (0 — never wait on CodeRabbit),
+`SKIP_KILL_GATE=1`, `LOCAL_CHECKS`.
+
+## The three review surfaces
+
+Passing one does not answer the others. See CLAUDE.md for the binding protocol.
+
+1. **CLI gate** (`orchestrator.sh`, pre-push) — blocking findings return to the agent up
+   to `CR_MAX_ROUNDS` times, then a mediator fixes, dismisses with rationale, or
+   escalates to Linear.
+2. **SaaS PR review** (`remediate_prs.sh`) — answers comments the GitHub app posts after
+   a PR opens. Pushes to the **same branch**, so the stack never deepens.
+3. **Deferred review** (`review_sweeper.sh`) — CodeRabbit's free tier allows 8 reviews
+   per replenishing window. When it runs dry the build does **not** wait: the debt is
+   banked in `.review_debt.tsv` and settled hourly.
+
+**Claude and CodeRabbit quotas are independent.** Claude out of credit → the sweeper
+still reviews, publishes findings to the PR and Linear, and parks the branch as
+`reviewed_pending_fix` with findings saved (a later sweep fixes without re-spending a
+review). CodeRabbit out of quota → the build carries on regardless.
 
 ## Morning review — PR approval order
 
-**Approve and merge strictly bottom-up.** The stack is a chain: PR #1 targets
-`development`, PR #2 targets PR #1's branch, and so on. Each PR's diff is only its own
-work; GitHub retargets a child to `development` automatically as its parent merges, and
-deletes the merged head branch. Merging out of order will conflict.
+**Approve and squash-merge strictly bottom-up.** The stack is a chain: the first PR
+targets `development`, the next targets that PR's branch, and so on. GitHub retargets a
+child to `development` as its parent merges and deletes the merged branch. Merging out
+of order will conflict. `logs/NIGHT_REPORT.md` prints the exact order, and the same list
+is posted on every PR.
 
-`ops/logs/NIGHT_REPORT.md` prints the exact order each morning, and the same list is
-posted as a comment on every PR. For each PR, in order:
+Per PR: read the CodeRabbit verdict in the body → check any escalated Linear issues →
+sanity-check the four things a tool misses (a skipped lineage event, unmasked text
+reaching an LLM, unparameterized SQL, floats on money) → approve → merge.
 
-1. **Read the CodeRabbit review on the PR.** The PR body says what the gate did:
-   `clean` (no findings), `resolved` (findings fixed before opening), `escalated`
-   (findings that survived — read them first), or `unavailable` (⛔ treat the branch as
-   entirely unreviewed by machine).
-2. **Check escalated Linear issues** linked to the parent issue. Decide: fix now, accept
-   into the backlog, or reject the finding. This is the one judgement the agents
-   deliberately deferred to you.
-3. **Sanity-check provenance and privacy claims yourself** — no lineage event skipped,
-   no unmasked text reaching an LLM call, no unparameterized SQL, `Decimal` on money.
-   These are the four things a review tool is least likely to catch in context.
-4. **Approve** and **squash-merge** into `development`.
-5. Confirm the head branch was deleted and the next PR retargeted, then move to the next.
+## Status markers
 
-Only promote `development` → `main` when you want a production deployment; that PR is a
-normal human-authored one, reviewed the same way.
-
-## When something goes wrong
-
-| Symptom in the night report | What it means | Action |
+| Marker | Meaning | Action |
 |---|---|---|
-| ❌ agent failed (exit N) | the implementing agent errored out | read `ops/logs/<ISSUE>_*.json`; issue was returned to Backlog |
-| ❌ no commits produced | agent finished but shipped nothing | usually an under-specified issue — sharpen it in mvp.md and re-seed |
-| ❌ wrong branch | agent committed off-branch; nothing pushed | work is local; inspect with `git log --all` |
-| ⛔ CodeRabbit unavailable | the gate could not run | `coderabbit auth login`, then review that PR by hand |
-| ⚠️ escalated | findings survived mediation | triage the linked Linear issues before approving |
-| Loop stopped: rate-limited 3× | usage window keeps closing | resume later; `.completed_issues` protects finished work |
-| **KILL GATE FAILED** | AA-15 could not parse the fixture PDF into the fixture rows | stop and reconsider the parsing tier before spending more budget |
+| ✅ clean / resolved | reviewed, no blocking findings outstanding | normal review |
+| 📝 advisory | findings reported, none blocking | read them before approving |
+| 🔁 unverified | reviewed and fixed, confirming re-review never ran | closer look |
+| ⏳ deferred | CodeRabbit quota gone; queued for the sweeper | nothing — it self-settles |
+| ⏸️ reviewed_pending_fix | review saved, fixer blocked on Claude credit | top up credit |
+| ⚠️ escalated | findings survived mediation | triage the linked Linear issues |
+| ⛔ unavailable | the gate could not run at all | review by hand |
+| 💸 budget | hit `MAX_BUDGET_USD` mid-work — **not a defect** | raise the cap, retry |
+| ❌ failed | agent errored, wrong branch, or no commits | read `logs/<ISSUE>_*.json` |
+| **KILL GATE FAILED** | AA-15 could not parse the fixture PDF into fixture rows | stop; the premise is unproven |
 
-The kill gate is deliberate: if a text-layer bank statement cannot be parsed
-deterministically into the same rows as its CSV fixture, the "upload your statements"
-premise is unproven, and every tier above it would be building on sand.
+Failed issues are never written to `.completed_issues`, so they retry automatically.
+Non-obvious failures are written up in `logs/REVISIT.md`.
+
+## Logs
+
+`NIGHT_REPORT.md` (what shipped + merge order) · `REVIEW_SWEEPER.md` (debt settled) ·
+`REMEDIATION_REPORT.md` (PR comments answered) · `builder.log` · `REVISIT.md` ·
+`<ISSUE>_*.json` (raw agent transcripts).
