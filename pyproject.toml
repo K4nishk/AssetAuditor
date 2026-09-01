@@ -1,0 +1,34 @@
+[project]
+name = "assetauditor"
+version = "0.1.0"
+description = "Finances + Portfolio auditor (Canada-first) — provenance-tracked ETL, contribution rooms, diversification dashboards"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.141.1",
+    "pydantic==2.13.4",
+    "uvicorn==0.52.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "httpx==0.28.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# ops/ predates this template and is planning/orchestration tooling, not app code;
+# AA-3 owns repo-wide CI lint policy.
+extend-exclude = ["ops"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
