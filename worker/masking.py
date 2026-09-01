@@ -15,10 +15,11 @@ _MASKED_STYLE_RE = re.compile(r"(?<!\w)[*#Xx]{2,}[*#Xx\s]*\d{4}\b")
 # "Account Number: 1234567890" or "Acct# 4821". Deliberately requires the
 # number to start immediately (allowing only a colon/hash/space run) after
 # the label so we never swallow unrelated digits later in the line (dollar
-# amounts, dates, etc.).
+# amounts, dates, etc.). The lead-in group is optional so a bare last-4
+# (e.g. "Acct# 4821") still matches, not just longer raw/partial-mask numbers.
 _LABELED_ACCOUNT_RE = re.compile(
     r"(?i)\b(?:account|acct)\.?\s*(?:no\.?|number)?\s*[:#]?\s*"
-    r"([*#Xx\d][*#Xx\d\-\s]{3,24}\d{4})\b"
+    r"((?:[*#Xx\d][*#Xx\d\-\s]{0,24})?\d{4})\b"
 )
 
 # Whole-line labeled PII fields: "Customer: ALEX MOCK 123 Sample St, Toronto ON".
@@ -28,7 +29,7 @@ _LABELED_PII_RE = re.compile(
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b")
-_SIN_RE = re.compile(r"\b\d{3}[-\s]\d{3}[-\s]\d{3}\b")
+_SIN_RE = re.compile(r"\b\d{3}(?:[-\s]?\d{3}){2}\b")
 
 # Canonical masked-token shape produced by this module: `{institution}-...{last4}`.
 _ALREADY_MASKED_RE = re.compile(r"^[a-z0-9]+-\.\.\.\d{4}$")

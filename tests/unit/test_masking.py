@@ -73,6 +73,14 @@ def test_redact_account_numbers_masks_labeled_raw_number() -> None:
     assert "scotia-...7890" in result
 
 
+def test_redact_account_numbers_masks_labeled_partial_mask_four_digits() -> None:
+    text = "Acct# 4821"
+    result = redact_account_numbers(text, "scotia")
+    assert "4821" in result  # last-4 survives, tokenized
+    assert "scotia-...4821" in result
+    assert result == "scotia-...4821"
+
+
 def test_redact_account_numbers_leaves_dollar_amounts_alone() -> None:
     text = "MORTGAGE PMT WEALTHSIMPLE 1,890.00 2,230.45; home estimate 520000.00"
     result = redact_account_numbers(text, "ws")
@@ -98,6 +106,13 @@ def test_redact_pii_strips_email_phone_sin() -> None:
     assert "123-456-789" not in result
     assert "[REDACTED_EMAIL]" in result
     assert "[REDACTED_PHONE]" in result
+    assert "[REDACTED_SIN]" in result
+
+
+def test_redact_pii_strips_unformatted_sin() -> None:
+    text = "SIN 123456789 on file."
+    result = redact_pii(text)
+    assert "123456789" not in result
     assert "[REDACTED_SIN]" in result
 
 
