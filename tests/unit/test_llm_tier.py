@@ -267,3 +267,45 @@ def test_raises_on_invalid_kind() -> None:
     client = FakeClient([_row(kind="transfer")])
     with pytest.raises(LlmExtractionError, match="invalid transaction kind"):
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+def test_raises_on_empty_choices() -> None:
+    client = FakeClient([])
+    client.chat.completions.response = _FakeResponse(choices=[])
+    with pytest.raises(LlmExtractionError, match="no choices"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+def test_raises_on_missing_message() -> None:
+    client = FakeClient([])
+    client.chat.completions.response = _FakeResponse(choices=[_FakeChoice(message=None)])
+    with pytest.raises(LlmExtractionError, match="no message"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+def test_raises_on_out_of_range_confidence() -> None:
+    confidence = {
+        "occurred_at": 1.0,
+        "description": 1.0,
+        "kind": 1.0,
+        "amount": 1.2,
+        "balance_after": 1.0,
+        "account_mask": 1.0,
+    }
+    client = FakeClient([_row(confidence=confidence)])
+    with pytest.raises(LlmExtractionError, match="malformed transaction row"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+def test_raises_on_non_finite_confidence() -> None:
+    confidence = {
+        "occurred_at": 1.0,
+        "description": 1.0,
+        "kind": 1.0,
+        "amount": float("nan"),
+        "balance_after": 1.0,
+        "account_mask": 1.0,
+    }
+    client = FakeClient([_row(confidence=confidence)])
+    with pytest.raises(LlmExtractionError, match="malformed transaction row"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)

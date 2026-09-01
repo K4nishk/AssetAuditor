@@ -21,6 +21,7 @@ on `StagedRowDraft` is exactly the signal AA-17 uses to highlight it).
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -80,7 +81,10 @@ _TRANSACTION_SCHEMA: dict[str, Any] = {
                     "confidence": {
                         "type": "object",
                         "description": "0.0-1.0 confidence per field; 1.0 only when unambiguous",
-                        "properties": {name: {"type": "number"} for name in _CONFIDENCE_FIELDS},
+                        "properties": {
+                            name: {"type": "number", "minimum": 0.0, "maximum": 1.0}
+                            for name in _CONFIDENCE_FIELDS
+                        },
                         "required": list(_CONFIDENCE_FIELDS),
                         "additionalProperties": False,
                     },
@@ -179,7 +183,14 @@ def extract_transactions(
         },
     )
 
-    content = response.choices[0].message.content
+    if not response.choices:
+        raise LlmExtractionError("LiteLLM response had no choices")
+
+    message = response.choices[0].message
+    if message is None:
+        raise LlmExtractionError("LiteLLM response choice had no message")
+
+    content = message.content
     if not content:
         raise LlmExtractionError("LiteLLM response had no message content")
 
@@ -199,12 +210,24 @@ def extract_transactions(
     return LlmExtractionResult(drafts=drafts, extraction_backend=_extraction_backend(response))
 
 
+def _validate_confidence(name: str, value: Any) -> float:
+    """Coerce a per-field confidence to `float`, rejecting NaN/inf and anything
+    outside `[0.0, 1.0]` — the schema's `minimum`/`maximum` only constrain a
+    well-behaved model; this is the backstop for a provider that ignores them."""
+    result = float(value)
+    if not math.isfinite(result) or not (0.0 <= result <= 1.0):
+        raise ValueError(f"confidence field {name!r} out of range [0.0, 1.0]: {value!r}")
+    return result
+
+
 def _to_draft(
     row: dict[str, Any], *, institution_slug: str, account_mask_override: str | None
 ) -> StagedRowDraft:
     try:
         confidence = row["confidence"]
-        field_confidence = {name: float(confidence[name]) for name in _CONFIDENCE_FIELDS}
+        field_confidence = {
+            name: _validate_confidence(name, confidence[name]) for name in _CONFIDENCE_FIELDS
+        }
         occurred_at = to_datetime_utc(str(row["occurred_at"]))
         kind = row["kind"]
         amount = require_decimal(row["amount"], field="amount")
