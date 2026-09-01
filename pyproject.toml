@@ -41,6 +41,12 @@ extend-exclude = ["ops"]
 # (AA-3) — every other bandit check is out of scope for this issue.
 select = ["E", "F", "I", "UP", "B", "S608"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's `Depends(...)`/`Query(...)`/etc. as argument defaults is the
+# framework's own documented pattern (evaluated once per request by FastAPI,
+# not at def-time) — not the mutable-default-argument bug B008 flags.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
+
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
