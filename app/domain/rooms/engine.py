@@ -60,7 +60,10 @@ def _compute_tfsa(
     for year in range(start_year, as_of_year + 1):
         limit = limits_table.tfsa_limit_for(year)
         if limit is None:
-            continue
+            raise ValueError(
+                f"limits table {limits_table.version} has no TFSA limit for {year}; "
+                "add the published limit before computing room for this year"
+            )
         computed_total += limit
         ledger.append(RoomLedgerEntry(year=year, kind="grant", amount=limit))
 

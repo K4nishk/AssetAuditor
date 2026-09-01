@@ -65,10 +65,18 @@ class CraLimitsTable:
         return self.tfsa_annual_limits.get(year)
 
     def rrsp_limit_for(self, year: int) -> Decimal:
+        if not self.rrsp_annual_limits:
+            raise ValueError(f"rrsp_annual_limits is empty in limits table {self.version!r}")
         if year in self.rrsp_annual_limits:
             return self.rrsp_annual_limits[year]
-        latest_known_year = max(self.rrsp_annual_limits)
-        return self.rrsp_annual_limits[latest_known_year]
+        earlier_years = [y for y in self.rrsp_annual_limits if y < year]
+        if earlier_years:
+            return self.rrsp_annual_limits[max(earlier_years)]
+        earliest_known_year = min(self.rrsp_annual_limits)
+        raise ValueError(
+            f"limits table {self.version!r} has no RRSP limit for {year} or earlier; "
+            f"earliest known year is {earliest_known_year}"
+        )
 
 
 CURRENT_VERSION = "2026"
