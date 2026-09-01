@@ -24,7 +24,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql
-          pg_bin="$(dirname "$(find /usr/lib/postgresql -maxdepth 2 -name initdb | head -n1)")"
+          initdb_path="$(find /usr/lib/postgresql -maxdepth 3 -type f -name initdb -print -quit)"
+          test -n "$initdb_path"
+          pg_bin="$(dirname "$initdb_path")"
           echo "$pg_bin" >> "$GITHUB_PATH"
 
       - name: Install uv
