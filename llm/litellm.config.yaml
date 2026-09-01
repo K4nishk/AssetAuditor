@@ -1,1 +1,28 @@
-# LiteLLM router config (model group "extractor": vllm primary <-> groq fallback) — implemented in AA-16.
+# LiteLLM router config (AA-16 / ADR v1.1.0 §3) — model group "extractor".
+#
+# Groq-only until the GPU box lands: AA-33 adds a `hosted_vllm/...` entry
+# under the same `model_name: extractor` group as the routing primary, with
+# this Groq entry becoming the automatic-cooldown fallback. Until then,
+# the worker's `extractor` requests (worker/extract/llm_tier.py) can only
+# ever reach Groq.
+#
+# RPM/TPM caps are set below Groq's published free-tier limits for this
+# model (console.groq.com/settings/limits) so a runaway extraction loop can
+# never cross into a paid tier — CLAUDE.md hard rule #6 / Assumption A16.
+# Re-check those console limits before raising these numbers; they are not
+# verified against a live Groq account from this repo.
+model_list:
+  - model_name: extractor
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 25
+      tpm: 5000
+      max_retries: 0 # a retry storm, not a single slow call, is the real cap risk
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

@@ -1,0 +1,92 @@
+name: LLM evals
+
+on:
+  pull_request:
+    paths:
+      - "worker/extract/llm_tier.py"
+      - "llm/litellm.config.yaml"
+      - "tests/evals/**"
+      - ".github/workflows/llm-evals.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: llm-evals-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golden-set:
+    name: golden-set eval (LiteLLM extractor, Groq)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AA-16 (this workflow's own issue) wires GROQ_API_KEY/LITELLM_MASTER_KEY
+      # as repo secrets — provisioning a Groq account is a manual step for the
+      # owner (CLAUDE.md zero-cost contract: no cloud credentials exist in the
+      # agent sandbox that authored this file). Until they're set, report a
+      # clear notice and pass instead of blocking every PR on a dependency
+      # this issue can't provision for itself.
+      - name: Check Groq/LiteLLM secrets
+        id: check
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+        run: |
+          if [ -n "$GROQ_API_KEY" ] && [ -n "$LITELLM_MASTER_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "::notice::GROQ_API_KEY / LITELLM_MASTER_KEY are not set yet — skipping the live golden-set eval. This starts enforcing automatically once those repo secrets exist."
+
+      - name: Install uv
+        if: steps.check.outputs.configured == 'true'
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync dependencies
+        if: steps.check.outputs.configured == 'true'
+        run: uv sync --frozen
+
+      # Same Groq-only config the worker box runs (llm/litellm.config.yaml) —
+      # the eval exercises the real routing config, not a stand-in.
+      - name: Start LiteLLM router
+        if: steps.check.outputs.configured == 'true'
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+        run: |
+          docker run -d --name litellm \
+            -p 4000:4000 \
+            -v "${{ github.workspace }}/llm/litellm.config.yaml:/app/config.yaml:ro" \
+            -e GROQ_API_KEY \
+            -e LITELLM_MASTER_KEY \
+            ghcr.io/berriai/litellm:main-stable \
+            --config /app/config.yaml --port 4000
+
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:4000/health/liveliness > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::litellm container never became healthy" >&2
+          docker logs litellm
+          exit 1
+
+      - name: Run golden-set eval
+        if: steps.check.outputs.configured == 'true'
+        env:
+          LITELLM_BASE_URL: http://localhost:4000
+          LITELLM_API_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+        run: uv run pytest tests/evals/ -v -m llm_eval
+
+      - name: Stop LiteLLM router
+        if: always() && steps.check.outputs.configured == 'true'
+        run: docker rm -f litellm

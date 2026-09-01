@@ -27,10 +27,11 @@ docker compose up -d         # worker + litellm, Groq-only — no --profile gpu 
 docker compose logs -f worker
 ```
 
-`litellm.config.yaml` is a placeholder until AA-16 writes the real routing
-config, so the `litellm` container will start but has nothing to serve yet —
-expected at this stage; only `worker`'s heartbeat matters for AA-4's done
-state.
+`llm/litellm.config.yaml` (AA-16) routes the `extractor` model group to Groq;
+set `GROQ_API_KEY` and `LITELLM_MASTER_KEY` in `.env` for the `litellm`
+container to actually serve requests. Without them it still starts (compose
+doesn't fail), but any call to `worker/extract/llm_tier.py`'s fallback tier
+will error at Groq auth, not at startup.
 
 Once the GPU box's driver/toolkit are in place (AA-33), add the vLLM service
 without touching anything else:
