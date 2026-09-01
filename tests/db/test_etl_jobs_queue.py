@@ -148,8 +148,34 @@ async def test_release_job_transitions_status_and_records_error(seeded_db):
     claimed = await claim_next_job(conn, claimed_by="worker-a")
 
     released = await release_job(
-        conn, job_id=str(claimed["id"]), status="failed", error="magic-byte mismatch"
+        conn,
+        job_id=str(claimed["id"]),
+        claimed_by="worker-a",
+        expected_status="claimed",
+        status="failed",
+        error="magic-byte mismatch",
     )
 
     assert released["status"] == "failed"
     assert released["error"] == "magic-byte mismatch"
+
+
+async def test_release_job_is_a_noop_for_a_non_owning_worker(seeded_db):
+    conn = seeded_db["conn"]
+    claimed = await claim_next_job(conn, claimed_by="worker-a")
+
+    released = await release_job(
+        conn,
+        job_id=str(claimed["id"]),
+        claimed_by="worker-b",
+        expected_status="claimed",
+        status="failed",
+        error="stolen",
+    )
+
+    assert released is None
+    row = await conn.fetchrow(
+        "select status, error from public.etl_jobs where id = $1", claimed["id"]
+    )
+    assert row["status"] == "claimed"
+    assert row["error"] is None

@@ -112,3 +112,38 @@ async def test_find_by_sha256_ignores_purged_rows(seeded_db):
     found = await find_by_sha256(conn, user_id=seeded_db["user_id"], sha256_hex="a" * 64)
 
     assert found is None
+
+
+async def test_insert_bronze_file_revives_a_purged_row_for_the_same_sha256(seeded_db):
+    conn = seeded_db["conn"]
+    first = await insert_bronze_file(
+        conn,
+        user_id=seeded_db["user_id"],
+        sha256_hex="a" * 64,
+        institution="scotiabank",
+        period="2026-07",
+        blob_url="https://blob.example/bronze/a",
+    )
+    await conn.execute(
+        "update public.bronze_files set purged_at = now() where id = $1", first["id"]
+    )
+
+    revived = await insert_bronze_file(
+        conn,
+        user_id=seeded_db["user_id"],
+        sha256_hex="a" * 64,
+        institution="scotiabank",
+        period="2026-08",
+        blob_url="https://blob.example/bronze/a-reuploaded",
+    )
+
+    assert revived is not None
+    assert revived["id"] == first["id"]
+    assert revived["blob_url"] == "https://blob.example/bronze/a-reuploaded"
+    assert revived["period"] == "2026-08"
+    row = await conn.fetchrow(
+        "select purged_at from public.bronze_files where id = $1", first["id"]
+    )
+    assert row["purged_at"] is None
+    rows = await conn.fetch("select id from public.bronze_files")
+    assert len(rows) == 1

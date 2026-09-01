@@ -8,6 +8,7 @@ into an HTTP response.
 
 from __future__ import annotations
 
+import codecs
 import re
 from dataclasses import dataclass
 
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 # stops a mistaken/abusive multi-GB upload from ever reaching Blob storage.
 MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024
 
-_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_SHA256_HEX_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 
 # The only shapes data/samples/README.md's adapter contract recognizes today.
 # Mapping declared MIME -> the sniffed family it must match (see
@@ -60,8 +61,11 @@ def sniff_content_type(header: bytes) -> str:
     if _BINARY_CONTROL_CHAR_RE.search(header):
         return "application/octet-stream"
 
+    # An incremental decoder (not `header.decode("utf-8")`) so a multi-byte
+    # character split by the 64-byte slice boundary — an incomplete, not
+    # invalid, sequence — doesn't misclassify real UTF-8 text as binary.
     try:
-        header.decode("utf-8")
+        codecs.getincrementaldecoder("utf-8")().decode(header)
     except UnicodeDecodeError:
         return "application/octet-stream"
 

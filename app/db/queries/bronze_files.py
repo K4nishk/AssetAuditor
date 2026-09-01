@@ -22,7 +22,12 @@ _FIND_BY_SHA256_SQL = """
 _INSERT_SQL = """
     insert into public.bronze_files (user_id, sha256, institution, period, blob_url)
     values ($1, $2, $3, $4, $5)
-    on conflict (user_id, sha256) do nothing
+    on conflict (user_id, sha256) do update
+        set blob_url = excluded.blob_url,
+            institution = excluded.institution,
+            period = excluded.period,
+            purged_at = null
+        where public.bronze_files.purged_at is not null
     returning id, user_id, sha256, institution, period, blob_url, created_at
 """
 
@@ -45,10 +50,13 @@ async def insert_bronze_file(
     """Insert a bronze row; returns `None` if a concurrent request won the race.
 
     `unique (user_id, sha256)` (migration 0001) is the actual dedupe
-    guarantee — this is `ON CONFLICT DO NOTHING` rather than a prior
-    `find_by_sha256` check-then-insert so two near-simultaneous uploads of the
-    same file can never both succeed, closing the TOCTOU gap a plain
-    check-then-insert would leave open.
+    guarantee — this is `ON CONFLICT DO UPDATE ... WHERE purged_at is not
+    null` rather than a prior `find_by_sha256` check-then-insert so two
+    near-simultaneous uploads of the same file can never both succeed,
+    closing the TOCTOU gap a plain check-then-insert would leave open. The
+    `WHERE` clause is what lets a conflict revive a purged row (AA-19's
+    sweeper) for a re-upload; a conflict with a still-live row updates
+    nothing and returns `None`, same as a plain `DO NOTHING` would.
     """
     return await conn.fetchrow(
         _INSERT_SQL, user_id, sha256_hex, institution, period, blob_url

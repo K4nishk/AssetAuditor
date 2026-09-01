@@ -49,6 +49,7 @@ def test_put_sends_bearer_auth_and_returns_the_response_url():
     assert request.full_url == "https://blob.vercel-storage.com/bronze/u1/abc"
     assert request.get_header("Authorization") == "Bearer secret-token"
     assert request.get_header("X-content-type") == "application/pdf"
+    assert request.get_header("X-api-version") == "12"
     assert request.data == b"file-bytes"
 
 

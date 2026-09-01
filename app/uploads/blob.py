@@ -60,6 +60,11 @@ class VercelBlobStorage:
                 # Bronze pathnames are already unique per (user, sha256); a
                 # deterministic URL is what makes dedupe-by-sha256 meaningful.
                 "x-add-random-suffix": "0",
+                # Required by Vercel Blob's REST API — same "unverified"
+                # caveat as the rest of this request shape (see module
+                # docstring); correct this value in one place if it's stale
+                # once someone runs this against a live token.
+                "x-api-version": "12",
             },
         )
         opener = self.transport or urllib.request.urlopen

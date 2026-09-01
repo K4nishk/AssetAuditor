@@ -44,7 +44,10 @@ def _b64decode(value: str) -> bytes:
 
 
 def _sign(payload_b64: str, secret: bytes) -> str:
-    return hmac.new(secret, payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
+    # utf-8, not ascii: `payload_b64` is attacker-controlled on the verify
+    # path (the client-supplied half of `token.split(".", 1)`), and utf-8
+    # can encode any `str` — ascii would raise on non-ASCII input.
+    return hmac.new(secret, payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def create_upload_token(
@@ -86,7 +89,11 @@ def verify_upload_token(
         raise InvalidUploadToken("malformed token") from None
 
     expected_signature = _sign(payload_b64, secret)
-    if not hmac.compare_digest(signature, expected_signature):
+    # Compare as bytes: `hmac.compare_digest` raises `TypeError` for a `str`
+    # containing non-ASCII characters, which a malicious/malformed
+    # client-supplied `signature` could otherwise turn into a 500 instead of
+    # the intended 401.
+    if not hmac.compare_digest(signature.encode("utf-8"), expected_signature.encode("ascii")):
         raise InvalidUploadToken("bad signature")
 
     try:

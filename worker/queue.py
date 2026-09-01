@@ -36,12 +36,21 @@ _CLAIM_NEXT_JOB_SQL = """
 
 _RELEASE_JOB_SQL = """
     update public.etl_jobs
-    set status = $2, error = $3
-    where id = $1
+    set status = $4, error = $5
+    where id = $1 and claimed_by = $2 and status = $3
     returning id, status, error
 """
 
 _VALID_STATUSES = frozenset({"pending", "claimed", "parsing", "needs_user", "done", "failed"})
+
+# Which `expected_status` a job may move on from, and what it may become.
+# Keeps `release_job` from being used to jump a job backward (e.g. "done" ->
+# "claimed") or sideways into "pending", which only `claim_next_job` may set.
+_ALLOWED_TRANSITIONS = {
+    "claimed": frozenset({"parsing", "needs_user", "done", "failed"}),
+    "parsing": frozenset({"needs_user", "done", "failed"}),
+    "needs_user": frozenset({"parsing", "done", "failed"}),
+}
 
 
 async def claim_next_job(conn: asyncpg.Connection, *, claimed_by: str) -> asyncpg.Record | None:
@@ -50,13 +59,32 @@ async def claim_next_job(conn: asyncpg.Connection, *, claimed_by: str) -> asyncp
 
 
 async def release_job(
-    conn: asyncpg.Connection, *, job_id: str, status: str, error: str | None = None
+    conn: asyncpg.Connection,
+    *,
+    job_id: str,
+    claimed_by: str,
+    expected_status: str,
+    status: str,
+    error: str | None = None,
 ) -> asyncpg.Record | None:
     """Transition a claimed job to its next status (parsing/needs_user/done/failed).
+
+    `claimed_by` and `expected_status` both bind into the `UPDATE`'s `WHERE`
+    clause so only the worker that currently owns the job — from the state it
+    believes the job is still in — can move it; a worker acting on a stale
+    claim (another worker already advanced or re-claimed the row) gets `None`
+    back instead of silently overwriting someone else's transition. The
+    status pair must also be a real forward transition (`_ALLOWED_TRANSITIONS`)
+    so this can't be used to move a job backward or into `pending`, which only
+    `claim_next_job` may set.
 
     Extraction itself (parsing bytes, writing staged rows) is AA-14/15/16's
     job; this only records the outcome those issues arrive at.
     """
+    if expected_status not in _VALID_STATUSES:
+        raise ValueError(f"invalid etl_jobs status: {expected_status!r}")
     if status not in _VALID_STATUSES:
         raise ValueError(f"invalid etl_jobs status: {status!r}")
-    return await conn.fetchrow(_RELEASE_JOB_SQL, job_id, status, error)
+    if status not in _ALLOWED_TRANSITIONS.get(expected_status, frozenset()):
+        raise ValueError(f"invalid etl_jobs transition: {expected_status!r} -> {status!r}")
+    return await conn.fetchrow(_RELEASE_JOB_SQL, job_id, claimed_by, expected_status, status, error)

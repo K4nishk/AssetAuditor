@@ -28,7 +28,7 @@ def test_valid_sha256_hex_accepts_64_lowercase_hex_chars():
 
 @pytest.mark.parametrize(
     "value",
-    ["A" * 64, "a" * 63, "a" * 65, "g" * 64, ""],
+    ["A" * 64, "a" * 63, "a" * 65, "g" * 64, "", "a" * 64 + "\n"],
 )
 def test_valid_sha256_hex_rejects_malformed_values(value):
     assert is_valid_sha256_hex(value) is False
@@ -48,6 +48,15 @@ def test_sniff_content_type_rejects_binary_control_bytes():
 
 def test_sniff_content_type_rejects_invalid_utf8():
     assert sniff_content_type(b"\xff\xfe\x00\x01") == "application/octet-stream"
+
+
+def test_sniff_content_type_tolerates_a_multibyte_char_split_at_the_slice_boundary():
+    # "é" is b"\xc3\xa9" in utf-8; a 64-byte header slice that lands mid-char
+    # leaves only the leading byte, which is an *incomplete* sequence, not an
+    # invalid one — this must still sniff as text, not octet-stream.
+    header = b"x" * 63 + b"\xc3"
+    assert len(header) == 64
+    assert sniff_content_type(header) == "text/plain"
 
 
 def _declaration(**overrides):

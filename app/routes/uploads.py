@@ -12,9 +12,11 @@ the `etl_jobs` row the worker will later claim (`worker.queue.claim_next_job`).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -127,14 +129,36 @@ async def upload_blob(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "token does not belong to this user")
 
     content_length = request.headers.get("content-length")
-    if content_length is not None and int(content_length) > MAX_UPLOAD_SIZE_BYTES:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"upload exceeds cap of {MAX_UPLOAD_SIZE_BYTES} bytes",
-        )
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "malformed content-length header"
+            ) from exc
+        if declared_size > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                f"upload exceeds cap of {MAX_UPLOAD_SIZE_BYTES} bytes",
+            )
 
     content_type = request.headers.get("content-type", "")
-    data = await request.body()
+
+    # Stream and check the running total rather than `await request.body()`
+    # then check: a missing/understated content-length header would otherwise
+    # let an arbitrarily large body be buffered fully into memory before the
+    # cap is ever enforced.
+    chunks: list[bytes] = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                f"upload exceeds cap of {MAX_UPLOAD_SIZE_BYTES} bytes",
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
 
     try:
         validate_received_bytes(declared_content_type=content_type, data=data)
@@ -149,7 +173,10 @@ async def upload_blob(
 
     pathname = bronze_pathname(user_id, payload.sha256_hex)
     try:
-        blob_url = get_blob_storage().put(pathname, data, content_type)
+        # `VercelBlobStorage.put` is a blocking `urllib` call — running it
+        # in-thread would block the event loop for every other request this
+        # process is serving for the duration of the upload.
+        blob_url = await asyncio.to_thread(get_blob_storage().put, pathname, data, content_type)
     except BlobUploadError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "failed to store upload") from exc
 
@@ -182,12 +209,12 @@ async def upload_blob(
 
 @router.get("/{bronze_file_id}/status", response_model=UploadStatusResponse)
 async def upload_status(
-    bronze_file_id: str,
+    bronze_file_id: UUID,
     user_id: str = Depends(get_current_user_id),
     conn: asyncpg.Connection = Depends(_conn),
 ) -> UploadStatusResponse:
     job = await etl_jobs.get_job_status_for_bronze_file(
-        conn, user_id=user_id, bronze_file_id=bronze_file_id
+        conn, user_id=user_id, bronze_file_id=str(bronze_file_id)
     )
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no upload found for this bronze file")

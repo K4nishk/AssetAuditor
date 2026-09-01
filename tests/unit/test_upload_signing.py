@@ -63,6 +63,15 @@ def test_rejects_a_malformed_token():
         verify_upload_token("not-a-real-token", secret=SECRET)
 
 
+def test_rejects_a_non_ascii_signature_without_raising_type_error():
+    token = _token()
+    payload_b64, _signature = token.split(".", 1)
+    tampered = f"{payload_b64}.signaturé"
+
+    with pytest.raises(InvalidUploadToken, match="signature"):
+        verify_upload_token(tampered, secret=SECRET)
+
+
 def test_rejects_an_expired_token():
     token = _token(now=1_000_000.0, ttl_seconds=60)
 

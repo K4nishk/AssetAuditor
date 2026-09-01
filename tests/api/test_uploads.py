@@ -236,6 +236,36 @@ def test_upload_blob_rejects_content_that_doesnt_match_declared_type():
     assert response.status_code == 422
 
 
+def test_upload_blob_rejects_a_malformed_content_length_header():
+    _override_conn([])
+    token = _upload_token()
+
+    response = client.put(
+        f"/api/uploads/blob?token={token}",
+        content=b"a,b\n1,2\n",
+        headers={"content-type": "text/csv", "content-length": "not-a-number"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_upload_blob_rejects_an_oversized_body_streamed_without_content_length(monkeypatch):
+    monkeypatch.setattr(uploads_module, "MAX_UPLOAD_SIZE_BYTES", 5)
+    _override_conn([])
+    token = _upload_token(sha256_hex=hashlib.sha256(b"a" * 20).hexdigest())
+
+    def _stream():
+        yield b"a" * 20
+
+    response = client.put(
+        f"/api/uploads/blob?token={token}",
+        content=_stream(),
+        headers={"content-type": "text/csv"},
+    )
+
+    assert response.status_code == 413
+
+
 def test_upload_blob_returns_502_when_blob_storage_fails(monkeypatch):
     fake_blob = FakeBlobStorage(error=BlobUploadError("boom"))
     monkeypatch.setattr(uploads_module, "get_blob_storage", lambda: fake_blob)
@@ -276,20 +306,33 @@ def test_upload_blob_reports_duplicate_on_insert_conflict(monkeypatch):
 # --- GET /api/uploads/{id}/status --------------------------------------------
 
 
-def test_upload_status_returns_the_jobs_current_state():
-    _override_conn(
-        [{"bronze_file_id": "bronze-1", "status": "parsing", "error": None}]
-    )
+BRONZE_FILE_ID = "00000000-0000-0000-0000-0000000000aa"
 
-    response = client.get("/api/uploads/bronze-1/status")
+
+def test_upload_status_returns_the_jobs_current_state():
+    _override_conn([{"bronze_file_id": BRONZE_FILE_ID, "status": "parsing", "error": None}])
+
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
 
     assert response.status_code == 200
-    assert response.json() == {"bronze_file_id": "bronze-1", "status": "parsing", "error": None}
+    assert response.json() == {
+        "bronze_file_id": BRONZE_FILE_ID,
+        "status": "parsing",
+        "error": None,
+    }
 
 
 def test_upload_status_404s_for_an_unknown_bronze_file():
     _override_conn([None])
 
-    response = client.get("/api/uploads/does-not-exist/status")
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
 
     assert response.status_code == 404
+
+
+def test_upload_status_422s_for_a_malformed_bronze_file_id():
+    _override_conn([])
+
+    response = client.get("/api/uploads/does-not-exist/status")
+
+    assert response.status_code == 422

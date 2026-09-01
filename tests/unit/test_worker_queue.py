@@ -47,19 +47,47 @@ async def test_claim_next_job_returns_none_when_queue_is_empty():
     assert result is None
 
 
-async def test_release_job_binds_status_and_error_as_parameters():
+async def test_release_job_binds_owner_expected_status_status_and_error():
     conn = FakeConnection(fetchrow_result={"id": "job-1", "status": "done"})
 
-    await release_job(conn, job_id="job-1", status="done")
+    await release_job(
+        conn, job_id="job-1", claimed_by="worker-a", expected_status="parsing", status="done"
+    )
 
     query, args = conn.calls[0]
-    assert args == ("job-1", "done", None)
+    assert "claimed_by = $2" in query
+    assert "status = $3" in query
+    assert args == ("job-1", "worker-a", "parsing", "done", None)
 
 
 async def test_release_job_rejects_an_unknown_status():
     conn = FakeConnection()
 
     with pytest.raises(ValueError, match="invalid etl_jobs status"):
-        await release_job(conn, job_id="job-1", status="bogus")
+        await release_job(
+            conn, job_id="job-1", claimed_by="worker-a", expected_status="parsing", status="bogus"
+        )
+
+    assert conn.calls == []
+
+
+async def test_release_job_rejects_an_unknown_expected_status():
+    conn = FakeConnection()
+
+    with pytest.raises(ValueError, match="invalid etl_jobs status"):
+        await release_job(
+            conn, job_id="job-1", claimed_by="worker-a", expected_status="bogus", status="done"
+        )
+
+    assert conn.calls == []
+
+
+async def test_release_job_rejects_a_disallowed_transition():
+    conn = FakeConnection()
+
+    with pytest.raises(ValueError, match="invalid etl_jobs transition"):
+        await release_job(
+            conn, job_id="job-1", claimed_by="worker-a", expected_status="done", status="claimed"
+        )
 
     assert conn.calls == []
