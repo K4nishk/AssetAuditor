@@ -26,7 +26,9 @@ automatically):
   see the 2026-09-01 decision-log entry. (A per-run copy also lands in
   `ops/logs/REVISIT.md`, which is gitignored and therefore local-only.)
 - **KCH-52 (AA-17, parse-confirm screen)** — hit the `$10` per-issue budget cap mid-work.
-  Not a defect. The builder now defaults to `MAX_BUDGET_USD=12.00`.
+  Not a defect. The per-issue cap has since been removed entirely: runs are bounded by
+  `MAX_TURNS` and by the account spend limit, which halts the run cleanly. Implementation
+  now runs on `claude-sonnet-5`, with `claude-opus-5` reserved for mediation.
 
 ## What runs by itself
 

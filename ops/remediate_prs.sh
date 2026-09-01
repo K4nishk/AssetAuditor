@@ -174,7 +174,7 @@ Finally, write /REMEDIATION_OUT.json in the repo root (do not commit it):
  \"contract_changed\":[{\"finding\":\"...\",\"what_changed\":\"...\",\"affects\":\"AA-n, AA-m\"}],
  \"escalated\":[{\"finding\":\"...\",\"why_not_fixed\":\"...\",\"risk_of_shipping\":\"...\",
                 \"issue_title\":\"...\",\"issue_body\":\"...\"}]}" \
-    "$medlog" "$MEDIATOR_MODEL"
+    "$medlog" "$IMPL_MODEL"
 
   if is_spend_capped "$medlog"; then
     log "*** SPEND CAP hit during remediation of PR #$pr — halting. ***"

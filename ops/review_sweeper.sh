@@ -164,7 +164,7 @@ Write /REMEDIATION_OUT.json in the repo root (do not commit it):
  \"contract_changed\":[{\"finding\":\"...\",\"what_changed\":\"...\",\"affects\":\"AA-n\"}],
  \"escalated\":[{\"finding\":\"...\",\"why_not_fixed\":\"...\",\"risk_of_shipping\":\"...\",
                 \"issue_title\":\"...\",\"issue_body\":\"...\"}]}" \
-    "$fixlog" "$MEDIATOR_MODEL"
+    "$fixlog" "$IMPL_MODEL"
 
   if is_spend_capped "$fixlog"; then
     # Claude is out of credit. This does NOT stop the sweep — CodeRabbit reviews

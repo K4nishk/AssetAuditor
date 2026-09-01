@@ -73,12 +73,27 @@ Manual run of either loop:
 
 ```bash
 caffeinate -ims ./ops/run_builder.sh
+./ops/run_builder.sh --status      # read-only: queue, locks, recent log
 ./ops/review_sweeper.sh            # --status prints the debt ledger
 ```
 
-Knobs: `MAX_BUDGET_USD` (per issue; builder defaults 12.00), `MAX_TURNS`, `IMPL_MODEL`,
-`MEDIATOR_MODEL`, `CR_MAX_ROUNDS` (2), `CR_RL_MAX_WAITS` (0 — never wait on CodeRabbit),
-`SKIP_KILL_GATE=1`, `LOCAL_CHECKS`.
+Knobs: `MAX_TURNS`, `IMPL_MODEL`, `MEDIATOR_MODEL`, `CR_MAX_ROUNDS` (2),
+`CR_RL_MAX_WAITS` (0 — never wait on CodeRabbit), `SKIP_KILL_GATE=1`, `LOCAL_CHECKS`.
+
+**There is no per-issue budget cap.** Runs are bounded by `MAX_TURNS` and by the account
+spend limit, which `is_spend_capped()` detects and halts on cleanly.
+
+## Which model runs what
+
+| Env | Default | Used by |
+|---|---|---|
+| `IMPL_MODEL` | `claude-sonnet-5` | implementing agent · CodeRabbit fix rounds · sweeper and PR-remediation fixers |
+| `MEDIATOR_MODEL` | `claude-opus-5` | mediator only — adjudicating disputed findings (fix / dismiss / escalate) |
+
+Implementation works against a spec that already exists and burns most of the tokens, so
+it runs on the cheaper tier. Mediation is a judgement call whose rationale a human reads
+later, so it keeps the stronger model. Override either per run:
+`IMPL_MODEL=claude-opus-5 ./ops/run_builder.sh`.
 
 ## The three review surfaces
 
@@ -121,7 +136,6 @@ reaching an LLM, unparameterized SQL, floats on money) → approve → merge.
 | ⏸️ reviewed_pending_fix | review saved, fixer blocked on Claude credit | top up credit |
 | ⚠️ escalated | findings survived mediation | triage the linked Linear issues |
 | ⛔ unavailable | the gate could not run at all | review by hand |
-| 💸 budget | hit `MAX_BUDGET_USD` mid-work — **not a defect** | raise the cap, retry |
 | ❌ failed | agent errored, wrong branch, or no commits | read `logs/<ISSUE>_*.json` |
 | **KILL GATE FAILED** | AA-15 could not parse the fixture PDF into fixture rows | stop; the premise is unproven |
 

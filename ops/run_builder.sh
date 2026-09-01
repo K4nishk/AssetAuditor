@@ -23,6 +23,27 @@ LOG="$OPS_DIR/logs/builder.log"
 mkdir -p "$OPS_DIR/logs"
 say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
+remaining_count() {
+  comm -23 \
+    <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$OPS_DIR/queue.tsv" 2>/dev/null | cut -f2 | sort) \
+    <(sort "$OPS_DIR/.completed_issues" 2>/dev/null) | grep -c . || true
+}
+
+# Read-only. Touches no lock, starts nothing.
+if [ "${1:-}" = "--status" ]; then
+  echo "remaining issues : $(remaining_count)"
+  if [ -d "$LOCK" ]; then
+    echo "builder          : RUNNING (lock age $(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || echo 0) ))s)"
+  else
+    echo "builder          : idle"
+  fi
+  [ -d "$OPS_DIR/.worktree.lock" ] && echo "worktree         : HELD (an issue or sweep is in flight)" \
+                                   || echo "worktree         : free"
+  echo "last log lines   :"
+  tail -5 "$LOG" 2>/dev/null | sed 's/^/    /' || echo "    (no log yet)"
+  exit 0
+fi
+
 # 1. one builder at a time. A run can legitimately last hours, so only reclaim a
 #    lock old enough that the process behind it cannot plausibly be alive.
 if ! mkdir "$LOCK" 2>/dev/null; then
@@ -42,9 +63,7 @@ if [ -d "$OPS_DIR/.worktree.lock" ]; then
 fi
 
 # 3. is there anything left to build?
-remaining=$(comm -23 \
-  <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$OPS_DIR/queue.tsv" 2>/dev/null | cut -f2 | sort) \
-  <(sort "$OPS_DIR/.completed_issues" 2>/dev/null) | grep -c . || true)
+remaining=$(remaining_count)
 if [ "${remaining:-0}" -eq 0 ]; then
   say "Queue exhausted — nothing to build."; exit 0
 fi
@@ -62,7 +81,6 @@ fi
 
 # shellcheck disable=SC1090
 [ -f "$OPS_DIR/.env.local" ] && . "$OPS_DIR/.env.local"
-export MAX_BUDGET_USD="${MAX_BUDGET_USD:-12.00}"
 
 say "Starting orchestrator — $remaining issue(s) remaining."
 ./ops/orchestrator.sh >> "$LOG" 2>&1

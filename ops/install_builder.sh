@@ -9,11 +9,11 @@
 #     intervals missed while asleep into a single run — so a laptop that sleeps
 #     from 02:00 to 09:00 still sweeps its review debt on waking, once.
 #     (StartInterval does not: kqueue drops those events.)
-# The sweeper's own lock guards against the coalesced double-fire.
+# run_builder.sh's own lock guards against the coalesced double-fire.
 #
-#   ./ops/install_sweeper.sh            # install + start
-#   ./ops/install_sweeper.sh --uninstall
-#   ./ops/install_sweeper.sh --status
+#   ./ops/install_builder.sh            # install + start
+#   ./ops/install_builder.sh --uninstall
+#   ./ops/install_builder.sh --status
 
 set -uo pipefail
 
@@ -32,13 +32,13 @@ case "${1:-}" in
     echo; "$OPS_DIR/run_builder.sh" --status; exit 0 ;;
 esac
 
-[ -f "$ENV_FILE" ] || { echo "FATAL: $ENV_FILE missing — the sweeper needs LINEAR_API_KEY and LINEAR_TEAM_KEY."; exit 1; }
+[ -f "$ENV_FILE" ] || { echo "FATAL: $ENV_FILE missing — the builder needs LINEAR_API_KEY and LINEAR_TEAM_KEY."; exit 1; }
 
 mkdir -p "$HOME/Library/LaunchAgents" "$OPS_DIR/logs"
 
 # The agent runs a login shell so PATH picks up claude, gh, coderabbit and uv the
 # same way an interactive terminal does; launchd's own PATH is famously minimal.
-cat > "$PLIST" <<PLIST_EOF
+if ! cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -50,7 +50,7 @@ cat > "$PLIST" <<PLIST_EOF
     <string>-lc</string>
     <string>cd '$REPO_DIR' &amp;&amp; source '$ENV_FILE' &amp;&amp; exec ./ops/run_builder.sh</string>
   </array>
-  <!-- Top of every hour. StartCalendarInterval (not StartInterval) so a sweep
+  <!-- Every 2 hours at :22. StartCalendarInterval (not StartInterval) so a build
        missed while the Mac slept runs once on wake instead of being dropped. -->
   <key>StartCalendarInterval</key>
   <array>
@@ -65,14 +65,20 @@ $(for h in 0 2 4 6 8 10 12 14 16 18 20 22; do printf '    <dict><key>Hour</key><
 </dict>
 </plist>
 PLIST_EOF
+then
+  echo "FATAL: could not write $PLIST — the agent was NOT installed."
+  echo "       (If a previous run booted it out, it is now unloaded: reinstall from a"
+  echo "        normal terminal, outside any sandbox.)"
+  exit 1
+fi
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || launchctl load "$PLIST" 2>/dev/null; then
+if launchctl bootstrap "gui/$(id -u)" "$PLIST"; then
   echo "Installed and loaded: $LABEL"
   echo "  runs   : every 2 hours at :22 (and once on wake if slots were missed)"
   echo "  logs   : ops/logs/builder.log · ops/logs/NIGHT_REPORT.md"
   echo "  ledger : ./ops/run_builder.sh --status"
-  echo "  stop   : ./ops/install_sweeper.sh --uninstall"
+  echo "  stop   : ./ops/install_builder.sh --uninstall"
   echo
   echo "Run it once now to confirm it works:  ./ops/run_builder.sh"
 else
