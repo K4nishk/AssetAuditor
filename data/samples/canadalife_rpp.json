@@ -1,0 +1,16 @@
+{
+  "plan": "Registered Pension Plan (DC)",
+  "provider": "Canada Life",
+  "account_mask": "cl-...3377",
+  "as_of": "2026-07-31",
+  "market_value_cad": 22500.00,
+  "ytd_contributions": {
+    "employee_cad": 2100.00,
+    "employer_match_cad": 2100.00
+  },
+  "prior_year_pension_adjustment_cad": 4100.00,
+  "investment_mix": [
+    { "fund": "CL Global Equity Index", "asset_class": "equity_fund", "weight_pct": 70, "geography": "global" },
+    { "fund": "CL Canadian Bond Index", "asset_class": "bond_fund", "weight_pct": 30, "geography": "canada" }
+  ]
+}

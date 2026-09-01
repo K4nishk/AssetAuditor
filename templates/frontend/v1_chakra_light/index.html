@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AssetAuditor — Template v1 (Chakra-flavored, light/dark)</title>
+<style>
+  :root {
+    --bg:#f7fafc; --card:#ffffff; --ink:#1a202c; --sub:#4a5568; --line:#e2e8f0;
+    --brand:#3182ce; --brand-ink:#fff; --good:#38a169; --warn:#dd6b20; --shadow:0 1px 3px rgba(0,0,0,.08);
+  }
+  [data-theme="dark"] {
+    --bg:#171923; --card:#1f2430; --ink:#edf2f7; --sub:#a0aec0; --line:#2d3748;
+    --brand:#63b3ed; --brand-ink:#1a202c; --shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  * { box-sizing:border-box; margin:0; }
+  body { font:14px/1.55 "Inter",-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:20px; padding:14px 28px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; }
+  .logo { font-weight:800; letter-spacing:-.3px; }
+  nav a { color:var(--sub); text-decoration:none; padding:6px 12px; border-radius:8px; font-weight:500; }
+  nav a.active { background:var(--brand); color:var(--brand-ink); }
+  .spacer { flex:1; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; font:inherit; }
+  main { max-width:1100px; margin:0 auto; padding:24px 28px; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; box-shadow:var(--shadow); }
+  .kpi .v { font-size:24px; font-weight:800; letter-spacing:-.5px; }
+  .kpi .l { color:var(--sub); font-size:12px; margin-top:2px; }
+  .kpi .d { font-size:12px; margin-top:6px; }
+  .up { color:var(--good); } .flag { color:var(--warn); }
+  .grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; box-shadow:var(--shadow); }
+  .card h3 { font-size:13px; font-weight:700; margin-bottom:4px; }
+  .card .sub { color:var(--sub); font-size:11px; margin-bottom:10px; }
+  .donut { display:flex; justify-content:center; }
+  path.slice { cursor:pointer; stroke:var(--card); stroke-width:2; transition:opacity .12s; }
+  path.slice:hover { opacity:.75; }
+  .legend { font-size:11px; margin-top:10px; display:flex; flex-wrap:wrap; gap:3px 10px; color:var(--sub); }
+  .legend b::before { content:"● "; }
+  .callout { margin-top:20px; background:var(--card); border:1px solid var(--line); border-left:4px solid var(--warn); border-radius:12px; padding:14px 16px; }
+  .callout h4 { font-size:13px; margin-bottom:4px; }
+  .callout p { font-size:12.5px; color:var(--sub); }
+  footer { text-align:center; color:var(--sub); font-size:11px; padding:20px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">◆ AssetAuditor</span>
+  <nav><a class="active" href="#">Dashboard</a><a href="#">Uploads</a><a href="#">Rooms</a><a href="#">Audit notes</a></nav>
+  <span class="spacer"></span>
+  <button class="btn" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme==='dark'?'':'dark'">☾ / ☀ theme</button>
+</header>
+<main>
+  <div class="kpis">
+    <div class="kpi"><div class="v">$196,459</div><div class="l">Net worth (CAD)</div><div class="d up">▲ $3,120 vs Jun</div></div>
+    <div class="kpi"><div class="v">$41,200</div><div class="l">TFSA room</div><div class="d">of $51,500 granted</div></div>
+    <div class="kpi"><div class="v">$10,660</div><div class="l">RRSP new room 2026</div><div class="d">after $4,100 pension adj.</div></div>
+    <div class="kpi"><div class="v">$12,000</div><div class="l">FHSA room</div><div class="d">$28,000 lifetime left</div></div>
+  </div>
+  <div class="grid">
+    <div class="card"><h3>Term buckets</h3><div class="sub">liquidity-based · liabilities shown as ring gap</div><div class="donut" id="d1"></div></div>
+    <div class="card"><h3>Net-worth distribution</h3><div class="sub">by account/asset type</div><div class="donut" id="d2"></div></div>
+    <div class="card"><h3>Diversification</h3><div class="sub">asset class ▾ · geo · sector · currency</div><div class="donut" id="d3"></div></div>
+  </div>
+  <div class="callout">
+    <h4>⚑ Audit observations (LLM commentary on your gold data — wording generated, numbers yours)</h4>
+    <p>Crypto is 11% of investable assets — above the 10% flag for a medium risk profile. Employer-linked value (RPP + ESOP) is $24,210 while your salary comes from the same employer — double concentration. TD Balanced Growth's 2.18% MER is ~10× a comparable index ETF; that's ≈$157/yr at current value.</p>
+  </div>
+</main>
+<footer>Template v1 · Chakra-flavored tokens (light + dark via toggle) · donuts = Recharts targets in the real app · data: data/samples fixtures</footer>
+<script>
+const P=["#3182ce","#38a169","#d69e2e","#e53e3e","#805ad5","#319795","#d53f8c","#718096","#2f855a"];
+const D={
+ d1:[["Short-term",27700],["Medium",12240],["Long",576820],["Liabilities",421800]],
+ d2:[["Chq+Sav",12700],["HISA",15000],["Stocks",3110],["Bonds",5040],["ETFs",18900],["Mutual funds",7199],["Crypto",10600],["RPP",22500],["ESOP",1710]],
+ d3:[["Global equity ETFs",25400],["US single-name",3110],["Fixed income",12240],["Cash-like",27700],["Crypto",10600],["Employer-linked",24210]]
+};
+for(const id in D){
+  const data=D[id], total=data.reduce((s,d)=>s+d[1],0);
+  let a0=-Math.PI/2, svg=`<svg width="160" height="140" viewBox="0 0 120 120">`;
+  data.forEach((d,i)=>{
+    const a1=a0+2*Math.PI*d[1]/total, big=(a1-a0)>Math.PI?1:0;
+    const p=(r,a)=>`${(60+r*Math.cos(a)).toFixed(1)},${(60+r*Math.sin(a)).toFixed(1)}`;
+    svg+=`<path class="slice" fill="${P[i%9]}" d="M${p(50,a0)} A50,50 0 ${big} 1 ${p(50,a1)} L${p(28,a1)} A28,28 0 ${big} 0 ${p(28,a0)} Z"><title>${d[0]} — ${(100*d[1]/total).toFixed(1)}%</title></path>`;
+    a0=a1;
+  });
+  svg+=`</svg>`;
+  document.getElementById(id).innerHTML=svg;
+  document.getElementById(id).insertAdjacentHTML("afterend",`<div class="legend">`+data.map((d,i)=>`<b style="color:${P[i%9]}">${d[0]} ${(100*d[1]/total).toFixed(0)}%</b>`).join("")+`</div>`);
+}
+</script>
+</body>
+</html>

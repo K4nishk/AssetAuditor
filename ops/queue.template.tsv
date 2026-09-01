@@ -1,0 +1,69 @@
+# AssetAuditor build queue — tier<TAB>mvp.md issue<TAB>can_parallelize_within_tier
+#
+# ops/seed_linear.py --apply rewrites this into ops/queue.tsv with real Linear ids.
+# Tiers run in order; issues run strictly serially even where marked parallel,
+# because every branch is stacked on the previous one's PR. The parallel column
+# records which issues COULD be split across machines once merges start landing.
+#
+# Derived from mvp.md's dependency spine. Every entry's deps are satisfied by an
+# earlier tier or an earlier line in the same tier.
+#
+# Excluded on purpose:
+#   AA-30  per-user derived encryption keys — marked stretch, depends on AA-29
+#   AA-33  vLLM promotion + eval harness — gated on the GPU box, which is not here yet
+#          (the LiteLLM router still ships in AA-16, Groq-only, so nothing is blocked)
+
+# Tier 0 — foundation. Nothing else can be reviewed until these rails exist.
+0	AA-1	no
+0	AA-2	no
+0	AA-3	no
+0	AA-5	no
+
+# Tier 1 — pure domain logic. No cloud account needed; golden numbers in
+# data/samples/README.md make these fully verifiable tonight.
+1	AA-8	yes
+1	AA-12	yes
+
+# Tier 2 — deploy rails and auth.
+2	AA-4	no
+2	AA-6	no
+
+# Tier 3 — ingestion plumbing.
+3	AA-11	no
+3	AA-13	no
+3	AA-34	yes
+
+# Tier 4 — parsers and adapters. AA-15 is the KILL GATE: if a text-layer bank
+# statement cannot be parsed into the same rows as its CSV fixture, the product
+# premise is unproven and later tiers are wasted budget.
+4	AA-14	no
+4	AA-15	no
+4	AA-16	no
+
+# Tier 5 — confirm, load, retain.
+5	AA-17	no
+5	AA-18	no
+5	AA-19	yes
+5	AA-20	yes
+
+# Tier 6 — profile and contribution rooms UI.
+6	AA-7	no
+6	AA-9	no
+6	AA-10	yes
+
+# Tier 7 — dashboards and drill-down.
+7	AA-21	no
+7	AA-22	no
+7	AA-23	no
+7	AA-24	yes
+7	AA-25	yes
+7	AA-26	yes
+
+# Tier 8 — hardening and observability.
+8	AA-27	yes
+8	AA-28	yes
+8	AA-29	no
+
+# Tier 9 — showcase.
+9	AA-32	yes
+9	AA-31	yes

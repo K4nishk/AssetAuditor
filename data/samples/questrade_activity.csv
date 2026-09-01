@@ -1,0 +1,7 @@
+account,account_mask,trade_date,action,symbol,asset_class,quantity,price,commission,currency
+TFSA,qt-...9033,2024-03-14,BUY,AAPL,stock,4,171.20,4.95,USD
+TFSA,qt-...9033,2025-01-10,BUY,AAPL,stock,6,186.10,4.95,USD
+TFSA,qt-...9033,2024-06-02,BUY,VFV.TO,etf,30,118.40,0.00,CAD
+TFSA,qt-...9033,2025-09-15,BUY,VFV.TO,etf,20,127.75,0.00,CAD
+RRSP,qt-...9034,2025-02-20,BUY,ZAG.TO,bond_etf,180,13.90,0.00,CAD
+RRSP,qt-...9034,2026-01-12,BUY,GOC-2029,bond,25,98.60,0.00,CAD

@@ -1,0 +1,30 @@
+# --- orchestrator state (must stay ignored: `git clean -fd` runs between issues) ---
+ops/logs/
+ops/.completed_issues
+ops/.agent_contracts.md
+ops/.issue_map.tsv
+ops/queue.tsv
+CONTRACT_OUT.md
+CR_DISPUTE.md
+MEDIATION_OUT.json
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- node ---
+node_modules/
+dist/
+.vite/
+
+# --- env & secrets ---
+.env
+.env.local
+*.pem
+
+# --- os ---
+.DS_Store

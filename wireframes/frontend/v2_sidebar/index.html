@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AssetAuditor Wireframe v2 — Sidebar</title>
+<style>
+  :root { --ink:#2d3341; --line:#c9cfda; --soft:#f2f4f8; --note:#c2410c; --accent:#0ca678; }
+  * { box-sizing:border-box; margin:0; }
+  body { font:14px/1.5 -apple-system,"Segoe UI",sans-serif; color:var(--ink); background:#e8ebf1; padding:24px; }
+  .frame { max-width:1080px; margin:0 auto 24px; background:#fff; border:2px solid var(--ink); border-radius:8px; display:flex; min-height:560px; overflow:hidden; }
+  .side { width:200px; background:var(--soft); border-right:1.5px solid var(--line); padding:14px; }
+  .side .logo { font-weight:700; margin-bottom:16px; }
+  .side a { display:block; padding:7px 10px; border-radius:6px; color:var(--ink); text-decoration:none; font-size:13px; }
+  .side a.active { background:var(--accent); color:#fff; }
+  .side .sect { font-size:10px; text-transform:uppercase; color:#8a93a5; margin:14px 0 4px; }
+  .main { flex:1; padding:16px; position:relative; }
+  .note { font-size:11px; color:var(--note); border:1px dashed var(--note); border-radius:6px; padding:3px 6px; background:#fff7f2; display:inline-block; margin:4px 0; }
+  .card { border:1.5px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; }
+  .tabs span { border:1px solid var(--line); border-radius:999px; padding:2px 12px; font-size:12px; }
+  .tabs .on { background:var(--ink); color:#fff; }
+  .ph { background:repeating-linear-gradient(45deg,#f6f7fa,#f6f7fa 8px,#eef0f5 8px,#eef0f5 16px); border:1px dashed var(--line); border-radius:6px; display:flex; align-items:center; justify-content:center; color:#8a93a5; font-size:12px; }
+  .split { display:flex; gap:12px; }
+  .wf-label { text-align:center; font-size:12px; color:#5b667a; padding-bottom:10px; }
+</style>
+</head>
+<body>
+<p class="wf-label">WIREFRAME v2 (sidebar layout) — same screens & interactions as <code>../v1_topnav/</code> (which is fully interactive); this variant explores navigation & drill-down placement. Differences annotated.</p>
+
+<div class="frame">
+  <div class="side">
+    <div class="logo">◆ AssetAuditor</div>
+    <a class="active" href="#">Overview</a>
+    <a href="#">Diversification</a>
+    <a href="#">Contribution rooms</a>
+    <div class="sect">Data</div>
+    <a href="#">Uploads & parsing</a>
+    <a href="#">Lineage explorer</a>
+    <div class="sect">Account</div>
+    <a href="#">Profile · Deactivate · Delete</a>
+  </div>
+  <div class="main">
+    <div class="note">Δ v2: lineage gets its own left-nav entry (“Lineage explorer”) instead of living only inside drill-downs — better for the provenance-first story, one more surface to build</div>
+    <div class="split">
+      <div class="card" style="flex:2;">
+        <div class="tabs"><span class="on">Asset class</span><span>Geography</span><span>Sector</span><span>Currency</span></div>
+        <div class="ph" style="height:220px;">Diversification pie (cut switched by tabs — v1 uses a dropdown)</div>
+      </div>
+      <div class="card" style="flex:1;">
+        <div class="ph" style="height:120px;">Term-bucket pie</div>
+        <div class="ph" style="height:100px; margin-top:10px;">Net-worth pie</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ph" style="height:110px;">Drill-down panel docks here (persistent, right-of-content on wide screens) — v1 expands below the grid instead</div>
+    </div>
+    <div class="note">Δ v2: three pies never share a row — diversification is promoted to the hero chart. Choose per taste; interaction contract (hover=highlight, click=underlying data) is identical.</div>
+  </div>
+</div>
+</body>
+</html>

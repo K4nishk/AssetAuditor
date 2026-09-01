@@ -1,0 +1,35 @@
+{
+  "as_of": "2026-07-31",
+  "accounts": [
+    {
+      "type": "hisa",
+      "account_mask": "ws-...1104",
+      "balance_cad": 15000.00,
+      "interest_rate_pct": 2.75
+    },
+    {
+      "type": "fhsa_invest",
+      "account_mask": "ws-...1187",
+      "holdings": [
+        { "symbol": "XEQT.TO", "asset_class": "etf", "quantity": 120, "avg_cost_cad": 30.15, "market_value_cad": 4020.00 },
+        { "symbol": "XGRO.TO", "asset_class": "etf", "quantity": 260, "avg_cost_cad": 29.80, "market_value_cad": 8380.00 }
+      ],
+      "contributions": [
+        { "year": 2024, "amount_cad": 8000.00 },
+        { "year": 2025, "amount_cad": 4000.00 }
+      ]
+    }
+  ],
+  "liabilities": [
+    {
+      "type": "mortgage",
+      "account_mask": "ws-...9902",
+      "principal_remaining_cad": 412000.00,
+      "rate_pct": 4.34,
+      "term_end": "2029-06-01",
+      "amortization_years_remaining": 23,
+      "monthly_payment_cad": 1890.00,
+      "linked_asset": { "type": "real_estate", "user_estimated_value_cad": 520000.00 }
+    }
+  ]
+}

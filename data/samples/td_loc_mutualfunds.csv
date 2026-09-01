@@ -1,0 +1,10 @@
+product,account_mask,as_of,metric,value,currency
+line_of_credit,td-...5540,2026-07-31,credit_limit,25000.00,CAD
+line_of_credit,td-...5540,2026-07-31,balance_owing,9800.00,CAD
+line_of_credit,td-...5540,2026-07-31,interest_rate_pct,7.20,CAD
+line_of_credit,td-...5540,2026-07-31,min_payment,196.00,CAD
+mutual_fund,td-...6612,2026-07-31,fund_name,TD Balanced Growth Fund - Series A,
+mutual_fund,td-...6612,2026-07-31,units,412.335,
+mutual_fund,td-...6612,2026-07-31,nav_per_unit,17.46,CAD
+mutual_fund,td-...6612,2026-07-31,market_value,7199.37,CAD
+mutual_fund,td-...6612,2026-07-31,mer_pct,2.18,

@@ -1,0 +1,4 @@
+plan,grant_date,shares,status,vest_date,fmv_per_share_cad,notes
+ESOP,2024-04-01,25,vested,2025-04-01,38.00,employer match included
+ESOP,2025-04-01,20,vested,2026-04-01,38.00,
+ESOP,2026-04-01,30,unvested,2027-04-01,38.00,forfeit on departure

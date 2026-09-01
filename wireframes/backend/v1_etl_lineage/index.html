@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AssetAuditor Backend Wireframe — ETL & Lineage</title>
+<style>
+  body { font:14px/1.5 -apple-system,"Segoe UI",sans-serif; color:#2d3341; background:#f6f7fa; max-width:1000px; margin:0 auto; padding:24px; }
+  h1 { font-size:20px; } h2 { font-size:15px; margin:24px 0 8px; }
+  .card { background:#fff; border:1.5px solid #c9cfda; border-radius:8px; padding:16px; margin-bottom:16px; overflow-x:auto; }
+  .note { font-size:12px; color:#c2410c; }
+  pre.mermaid { background:transparent; }
+  table { border-collapse:collapse; font-size:12px; width:100%; }
+  th,td { border:1px solid #c9cfda; padding:4px 8px; text-align:left; }
+  code { background:#eef0f5; padding:1px 4px; border-radius:4px; font-size:12px; }
+</style>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+</head>
+<body>
+<h1>Backend wireframe v1 — ETL medallion flow & lineage graph</h1>
+<p class="note">Renders mermaid from CDN (needs internet). Same diagrams live in <code>docs/adr/ADR_v1.0.0.md</code>; this page adds the lineage-explorer visual target.</p>
+
+<div class="card">
+<h2>Medallion flow with retention & masking boundaries</h2>
+<pre class="mermaid">
+flowchart LR
+    subgraph BRONZE["BRONZE — raw, PII intact, 14-day TTL"]
+      F1[scotiabank_jul2026.pdf]:::b
+      F2[kraken_ledger.csv]:::b
+    end
+    subgraph SILVER["SILVER — masked, typed parquet, source of record"]
+      S1[transactions.parquet]:::s
+      S2[holdings.parquet]:::s
+      S3[liabilities.parquet]:::s
+    end
+    subgraph GOLD["GOLD — curated tables + CSV exports"]
+      G1[networth_snapshots]:::g
+      G2[term_buckets]:::g
+      G3[diversification_cuts]:::g
+      G4[room_ledger]:::g
+    end
+    F1 -->|pdfplumber → adapter → MASK → confirm| S1
+    F2 -->|csv adapter → MASK| S1 & S2
+    S1 --> G1 & G2 & G4
+    S2 --> G1 & G3
+    S3 --> G1 & G2
+    SW[retention sweeper\nnightly GH Action]:::x -.->|purge >14d + lineage event| BRONZE
+    classDef b fill:#fde8d7,stroke:#c2410c;
+    classDef s fill:#e7f0fe,stroke:#3b5bdb;
+    classDef g fill:#e2f6e9,stroke:#2f9e44;
+    classDef x fill:#fff,stroke:#868e96,stroke-dasharray:3;
+</pre>
+</div>
+
+<div class="card">
+<h2>Lineage explorer target (what clicking a pie slice resolves)</h2>
+<pre class="mermaid">
+flowchart TD
+    P["Pie slice: 'Crypto 11%'"] --> GR["gold rows: diversification_cuts\n(asset_class='crypto', snapshot 2026-07-31)"]
+    GR --> R1["run 7f2e… — kraken adapter v3\nCOMPLETE · 5 rows · deterministic"]
+    GR --> R2["run 88a1… — moomoo adapter v1\nCOMPLETE · 2 rows · llm+user-confirmed"]
+    R1 --> B1["bronze: kraken_ledger.csv\nsha256 4be2… · uploaded 2026-08-02 · PURGED 2026-08-16"]
+    R2 --> B2["bronze: moomoo_jul.csv\nsha256 91d0… · uploaded 2026-08-02 · PURGED 2026-08-16"]
+    R2 --> C1["user confirmation 2026-08-02 21:14\n1 row corrected (manual_correction)"]
+</pre>
+<p class="note">Purged bronze nodes stay in the graph as hash+metadata tombstones — provenance survives retention.</p>
+</div>
+
+<div class="card">
+<h2>FastAPI route surface (v1 sketch — full table in <code>templates/backend/v1_fastapi_modular/</code>)</h2>
+<table>
+<tr><th>Route</th><th>Purpose</th></tr>
+<tr><td><code>POST /auth/*</code> (Supabase-side)</td><td>signup/login/logout handled by Supabase client; API only verifies JWTs</td></tr>
+<tr><td><code>GET/PUT /profile</code> · <code>POST /profile/deactivate</code> · <code>DELETE /account</code></td><td>facts for room ledger; soft-freeze; hard purge</td></tr>
+<tr><td><code>POST /uploads</code> → signed URL · <code>GET /uploads/{id}/status</code></td><td>bronze intake + job tracking</td></tr>
+<tr><td><code>GET/POST /staged/{job}/rows</code></td><td>parse-confirm read/confirm/correct</td></tr>
+<tr><td><code>GET /dashboards/{networth|terms|diversification}</code></td><td>gold reads (cut param for diversification)</td></tr>
+<tr><td><code>GET /lineage/slice?chart=&key=</code></td><td>drill-down: gold→runs→inputs chain</td></tr>
+<tr><td><code>GET /rooms</code> · <code>POST /rooms/override</code></td><td>ledger view + CRA reconciliation entry</td></tr>
+<tr><td><code>POST /internal/sweep</code> (signed, GH Actions only)</td><td>retention enforcement</td></tr>
+</table>
+</div>
+</body>
+</html>
