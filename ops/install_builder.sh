@@ -56,8 +56,8 @@ cat > "$PLIST" <<PLIST_EOF
   <array>
 $(for h in 0 2 4 6 8 10 12 14 16 18 20 22; do printf '    <dict><key>Hour</key><integer>%d</integer><key>Minute</key><integer>22</integer></dict>\n' "$h"; done)
   </array>
-  <key>StandardOutPath</key><string>$OPS_DIR/logs/sweeper.out.log</string>
-  <key>StandardErrorPath</key><string>$OPS_DIR/logs/sweeper.err.log</string>
+  <key>StandardOutPath</key><string>$OPS_DIR/logs/builder.out.log</string>
+  <key>StandardErrorPath</key><string>$OPS_DIR/logs/builder.err.log</string>
   <key>WorkingDirectory</key><string>$REPO_DIR</string>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
