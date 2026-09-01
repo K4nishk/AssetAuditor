@@ -14,11 +14,16 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+import openai
 import pytest
 
 from worker.extract.llm_tier import (
     MODEL_GROUP,
+    LlmEndpointNotApprovedError,
     LlmExtractionError,
+    _client,
+    _resolve_client,
+    _validate_base_url,
     extract_transactions,
     lineage_facets,
 )
@@ -249,6 +254,24 @@ def test_raises_on_missing_transactions_key() -> None:
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
 
 
+@pytest.mark.parametrize("root", ["[]", '"transactions"', "null", "3"])
+def test_raises_on_non_object_response_root(root: str) -> None:
+    client = FakeClient([])
+    client.chat.completions.response.choices[0].message.content = root
+    with pytest.raises(LlmExtractionError, match="not a JSON object"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+@pytest.mark.parametrize("bad_row", [None, "PAYROLL DEPOSIT", []])
+def test_raises_on_non_object_transaction_entry(bad_row: Any) -> None:
+    client = FakeClient([])
+    client.chat.completions.response.choices[0].message.content = json.dumps(
+        {"transactions": [_row(), bad_row]}
+    )
+    with pytest.raises(LlmExtractionError, match="non-object entry"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
 def test_raises_on_malformed_row_missing_field() -> None:
     bad_row = _row()
     del bad_row["amount"]
@@ -309,3 +332,61 @@ def test_raises_on_non_finite_confidence() -> None:
     client = FakeClient([_row(confidence=confidence)])
     with pytest.raises(LlmExtractionError, match="malformed transaction row"):
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://litellm:4000",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
+        "https://litellm:4000",
+    ],
+)
+def test_validate_base_url_accepts_approved_hosts(base_url: str) -> None:
+    assert _validate_base_url(base_url) == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://api.groq.com/openai/v1",
+        "https://api.openai.com/v1",
+        "http://litellm.attacker.example:4000",
+        "http://litellm:4000@attacker.example",
+        "http://attacker.example/?litellm",
+    ],
+)
+def test_validate_base_url_rejects_unapproved_hosts(base_url: str) -> None:
+    with pytest.raises(LlmEndpointNotApprovedError):
+        _validate_base_url(base_url)
+
+
+def test_client_rejects_unapproved_base_url_override() -> None:
+    with pytest.raises(LlmEndpointNotApprovedError):
+        _client(base_url="https://api.groq.com/openai/v1")
+
+
+def test_client_rejects_unapproved_env_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LITELLM_BASE_URL", "https://api.groq.com/openai/v1")
+    with pytest.raises(LlmEndpointNotApprovedError):
+        _client()
+
+
+def test_client_accepts_default_base_url_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LITELLM_BASE_URL", raising=False)
+    client = _client()
+    assert str(client.base_url).rstrip("/") == "http://litellm:4000"
+
+
+def test_injected_sdk_client_pointed_at_a_provider_is_rejected() -> None:
+    """An injected real SDK client bypasses `_client()`'s check, so it gets
+    validated too — otherwise the injection seam is a hole in hard rule #6."""
+    direct = openai.OpenAI(base_url="https://api.groq.com/openai/v1", api_key="sk-test")
+    with pytest.raises(LlmEndpointNotApprovedError):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=direct)
+
+
+def test_injected_sdk_client_pointed_at_the_router_is_accepted() -> None:
+    routed = openai.OpenAI(base_url="http://litellm:4000", api_key="sk-test")
+    assert _resolve_client(routed) is routed

@@ -25,6 +25,7 @@ import math
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import openai
 
@@ -39,6 +40,16 @@ from worker.masking import mask_statement_text
 
 MODEL_GROUP = "extractor"
 DEFAULT_BASE_URL = "http://litellm:4000"
+
+# Hosts the self-hosted LiteLLM router is actually reachable at (compose
+# service name in `worker/docker-compose.yml`, plus loopback for local
+# bring-up and `.github/workflows/llm-evals.yml`'s CI container). Nothing
+# else is approved: CLAUDE.md hard rule #6 (Assumption A16) treats LiteLLM's
+# own RPM/TPM caps as the zero-cost contract's enforcement mechanism, so a
+# request that reaches a provider host directly bypasses that guarantee
+# silently. Allowlist, not blocklist — an unrecognized host fails closed
+# rather than trying to enumerate every provider domain that isn't allowed.
+_APPROVED_BASE_URL_HOSTS = frozenset({"litellm", "localhost", "127.0.0.1"})
 
 _CONFIDENCE_FIELDS = (
     "occurred_at",
@@ -122,6 +133,11 @@ class LlmExtractionError(RuntimeError):
     """Raised when the LiteLLM response is missing, malformed, or fails schema validation."""
 
 
+class LlmEndpointNotApprovedError(RuntimeError):
+    """Raised when `LITELLM_BASE_URL` (or an explicit override) does not resolve
+    to the self-hosted LiteLLM router — see `_APPROVED_BASE_URL_HOSTS`."""
+
+
 @dataclass(frozen=True)
 class LlmExtractionResult:
     drafts: list[StagedRowDraft]
@@ -138,11 +154,50 @@ def lineage_facets(result: LlmExtractionResult) -> dict[str, Any]:
     return {"extraction_method": "llm", "extraction_backend": result.extraction_backend}
 
 
+def _validate_base_url(base_url: str) -> str:
+    """Fail closed unless `base_url` points at the self-hosted LiteLLM router.
+
+    Compares only `urlparse`'s parsed hostname (never a substring match)
+    against `_APPROVED_BASE_URL_HOSTS`, so a spoofed host like
+    `litellm.attacker.example` or userinfo tricks like
+    `http://litellm:4000@attacker.example` can't slip through.
+    """
+    host = urlparse(base_url).hostname
+    if host not in _APPROVED_BASE_URL_HOSTS:
+        raise LlmEndpointNotApprovedError(
+            f"LITELLM_BASE_URL {base_url!r} does not resolve to an approved "
+            f"self-hosted LiteLLM endpoint (host must be one of "
+            f"{sorted(_APPROVED_BASE_URL_HOSTS)}); refusing to send extraction "
+            "requests directly to a provider."
+        )
+    return base_url
+
+
 def _client(*, base_url: str | None = None, api_key: str | None = None) -> openai.OpenAI:
+    resolved_base_url = base_url or os.environ.get("LITELLM_BASE_URL", DEFAULT_BASE_URL)
     return openai.OpenAI(
-        base_url=base_url or os.environ.get("LITELLM_BASE_URL", DEFAULT_BASE_URL),
+        base_url=_validate_base_url(resolved_base_url),
         api_key=api_key or os.environ.get("LITELLM_API_KEY", "sk-litellm-placeholder"),
     )
+
+
+def _resolve_client(client: openai.OpenAI | None) -> openai.OpenAI:
+    """Return the client this tier is allowed to send masked text to.
+
+    `_client()` validates `LITELLM_BASE_URL`, but an injected client would
+    otherwise carry whatever `base_url` it was constructed with straight past
+    that check — a caller could hand this tier an `openai.OpenAI` pointed at
+    a provider and bypass the router's RPM/TPM caps, which are the zero-cost
+    contract's only enforcement mechanism (CLAUDE.md hard rule #6). So every
+    real SDK client is validated too. The injection seam stays open only for
+    test doubles, which are not `openai.OpenAI` instances and never open a
+    socket (`tests/unit/test_llm_tier.py`'s `FakeClient`).
+    """
+    if client is None:
+        return _client()
+    if isinstance(client, openai.OpenAI):
+        _validate_base_url(str(client.base_url))
+    return client
 
 
 def extract_transactions(
@@ -164,7 +219,7 @@ def extract_transactions(
     breakdown survives in `payload["field_confidence"]` for anyone who wants it.
     """
     masked_text = mask_statement_text(raw_text, institution_slug)
-    active_client = client or _client()
+    active_client = _resolve_client(client)
 
     response = active_client.chat.completions.create(
         model=MODEL_GROUP,
@@ -199,9 +254,14 @@ def extract_transactions(
     except json.JSONDecodeError as exc:
         raise LlmExtractionError(f"LiteLLM response was not valid JSON: {content!r}") from exc
 
+    if not isinstance(parsed, dict):
+        raise LlmExtractionError(f"LiteLLM response root was not a JSON object: {parsed!r}")
+
     rows = parsed.get("transactions")
     if not isinstance(rows, list):
         raise LlmExtractionError(f"LiteLLM response missing a 'transactions' array: {parsed!r}")
+    if any(not isinstance(row, dict) for row in rows):
+        raise LlmExtractionError(f"LiteLLM 'transactions' array had a non-object entry: {rows!r}")
 
     drafts = [
         _to_draft(row, institution_slug=institution_slug, account_mask_override=account_mask)
