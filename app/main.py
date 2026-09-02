@@ -9,6 +9,8 @@ the same `/api/...` convention.
 
 from fastapi import FastAPI
 
+from app.routes.uploads import router as uploads_router
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AssetAuditor")
@@ -16,6 +18,8 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "AssetAuditor"}
+
+    app.include_router(uploads_router)
 
     return app
 
