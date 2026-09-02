@@ -11,6 +11,14 @@ loop rather than replacing it.
 extraction (adapters, pdfplumber/LLM tiers) is AA-14/15/16's job; claiming a
 job here just proves the queue mechanism works end to end, leaving the row at
 `status = 'claimed'` for those issues to advance further.
+
+AA-19 adds `retention_sweep_loop`, running `worker.retention.run_retention_sweep`
+once a day on this same long-lived process — the "nightly Action" mvp.md's
+AA-19 describes. Keeping it in-process (rather than a separate scheduled job)
+is what lets `retention_sweeper_last_success_timestamp` behave like the other
+worker gauges: a normal in-memory Prometheus value scraped off `/metrics`,
+per docs/vault/10-mental-models/Push-Dont-Scrape-Metrics.md ("the long-lived
+ETL worker can still expose a normal /metrics scrape target").
 """
 
 from __future__ import annotations
@@ -24,11 +32,14 @@ import uuid
 
 import asyncpg
 
+from app.uploads.blob import BlobStorage, get_blob_storage
 from worker import metrics
 from worker.queue import claim_next_job, count_queued_jobs
+from worker.retention import run_retention_sweep
 
 HEARTBEAT_INTERVAL_SECONDS = 30
 JOB_POLL_INTERVAL_SECONDS = 5
+RETENTION_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
 
 logger = logging.getLogger("worker")
 
@@ -81,6 +92,30 @@ async def job_poll_loop(
             pass
 
 
+async def retention_sweep_loop(
+    conn: asyncpg.Connection, stop_event: asyncio.Event, *, blob: BlobStorage
+) -> None:
+    while not stop_event.is_set():
+        try:
+            result = await run_retention_sweep(conn, blob=blob)
+            logger.info(
+                "retention sweep complete: bronze_purged=%s job_logs_scrubbed=%s",
+                result.bronze_purged,
+                result.job_logs_scrubbed,
+            )
+        except Exception:
+            # Deliberately broad: any failure here must NOT crash the whole
+            # worker process (heartbeat/job-poll loops keep running), and
+            # must NOT record a false success — mvp.md's AA-19 spec is to
+            # treat a stale sweeper as a privacy incident, so the metric
+            # staying stale on failure is the intended signal, not a bug.
+            logger.exception("retention sweep failed; will retry next interval")
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=RETENTION_SWEEP_INTERVAL_SECONDS)
+        except TimeoutError:
+            pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     database_url = os.environ["WORKER_DATABASE_URL"]
@@ -88,10 +123,11 @@ async def main() -> None:
     metrics_port = int(os.environ.get("WORKER_METRICS_PORT", metrics.DEFAULT_METRICS_PORT))
 
     heartbeat_conn = await asyncpg.connect(database_url)
-    # A separate connection from the heartbeat's: asyncpg connections aren't
-    # safe for concurrent queries from two coroutines at once, and these two
-    # loops run concurrently for the whole process lifetime.
+    # A separate connection per loop: asyncpg connections aren't safe for
+    # concurrent queries from two coroutines at once, and these loops run
+    # concurrently for the whole process lifetime.
     queue_conn = await asyncpg.connect(database_url)
+    retention_conn = await asyncpg.connect(database_url)
     stop_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -102,19 +138,22 @@ async def main() -> None:
         metrics.start_metrics_server(metrics_port)
         logger.info(
             "worker starting (id=%s, heartbeat_interval=%ss, job_poll_interval=%ss, "
-            "metrics_port=%s)",
+            "retention_sweep_interval=%ss, metrics_port=%s)",
             worker_id,
             HEARTBEAT_INTERVAL_SECONDS,
             JOB_POLL_INTERVAL_SECONDS,
+            RETENTION_SWEEP_INTERVAL_SECONDS,
             metrics_port,
         )
         await asyncio.gather(
             heartbeat_loop(heartbeat_conn, stop_event),
             job_poll_loop(queue_conn, stop_event, worker_id=worker_id),
+            retention_sweep_loop(retention_conn, stop_event, blob=get_blob_storage()),
         )
     finally:
         await heartbeat_conn.close()
         await queue_conn.close()
+        await retention_conn.close()
 
 
 if __name__ == "__main__":

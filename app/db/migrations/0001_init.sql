@@ -80,9 +80,24 @@ create table public.bronze_files (
     period text,
     blob_url text not null,
     purged_at timestamptz,
+    -- Retention sweeper (AA-19) outbox: set together with a `retention_purge`
+    -- START lineage event, in the same transaction, *before* the sweeper ever
+    -- calls Blob delete. That ordering means a crash between the delete call
+    -- succeeding and `purged_at` being set leaves a row that's still
+    -- correctly flagged unpurged and retryable, with its START event already
+    -- on record, rather than a deleted blob with no provenance trail at all.
+    purge_run_id uuid,
+    purge_started_at timestamptz,
     deactivated_at timestamptz,
     created_at timestamptz not null default now(),
-    unique (user_id, sha256)
+    unique (user_id, sha256),
+    -- The sweeper always writes both marker columns together and clears both
+    -- together; a half-set marker would be a purge in flight with no run id to
+    -- attach its `retention_purge` START event to, which is the provenance gap
+    -- the two-phase purge exists to close. Enforced here so a future writer
+    -- can't reintroduce it.
+    constraint bronze_files_purge_marker_paired
+        check ((purge_run_id is null) = (purge_started_at is null))
 );
 
 create index bronze_files_user_id_idx on public.bronze_files (user_id);

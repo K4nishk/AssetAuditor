@@ -14,7 +14,12 @@ from contextlib import contextmanager
 
 import pytest
 
-from app.uploads.blob import BlobUploadError, VercelBlobStorage, bronze_pathname
+from app.uploads.blob import (
+    BlobDeleteError,
+    BlobUploadError,
+    VercelBlobStorage,
+    bronze_pathname,
+)
 
 
 class _FakeResponse:
@@ -76,3 +81,30 @@ def test_put_raises_blob_upload_error_on_transport_failure():
 
 def test_bronze_pathname_is_scoped_by_user_and_content_hash():
     assert bronze_pathname("user-1", "a" * 64) == f"bronze/user-1/{'a' * 64}"
+
+
+def test_delete_sends_bearer_auth_and_the_target_url():
+    captured = []
+    storage = VercelBlobStorage(
+        token="secret-token", transport=_fake_transport({"ok": True}, captured)
+    )
+
+    storage.delete("https://blob.example/bronze/u1/abc")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.full_url == "https://blob.vercel-storage.com/delete"
+    assert request.get_header("Authorization") == "Bearer secret-token"
+    assert json.loads(request.data) == {"urls": ["https://blob.example/bronze/u1/abc"]}
+
+
+def test_delete_raises_blob_delete_error_on_transport_failure():
+    @contextmanager
+    def failing_transport(request, timeout):
+        raise OSError("connection refused")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+    storage = VercelBlobStorage(token="secret-token", transport=failing_transport)
+
+    with pytest.raises(BlobDeleteError):
+        storage.delete("https://blob.example/bronze/u1/abc")

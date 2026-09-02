@@ -31,9 +31,17 @@ class BlobUploadError(Exception):
     """Vercel Blob rejected or could not be reached for an upload."""
 
 
+class BlobDeleteError(Exception):
+    """Vercel Blob rejected or could not be reached for a delete (AA-19)."""
+
+
 class BlobStorage(Protocol):
     def put(self, pathname: str, data: bytes, content_type: str) -> str:
         """Upload `data` to `pathname` and return the resulting public URL."""
+        ...
+
+    def delete(self, url: str) -> None:
+        """Delete the blob at `url` (AA-19's retention sweeper)."""
         ...
 
 
@@ -78,6 +86,29 @@ class VercelBlobStorage:
             return str(body["url"])
         except KeyError as exc:
             raise BlobUploadError(f"Vercel Blob response missing 'url': {body!r}") from exc
+
+    def delete(self, url: str) -> None:
+        """`bronze_files.blob_url` is the authoritative URL for a row (not a
+        re-derived pathname) — this is what AA-19's retention sweeper calls
+        with it once a bronze file passes its 14-day TTL."""
+        request = urllib.request.Request(  # noqa: S310 - fixed https host, not user input
+            f"{_BLOB_API_BASE}/delete",
+            data=json.dumps({"urls": [url]}).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "content-type": "application/json",
+                # Same unverified caveat as `put` — no network/token in this
+                # sandbox to confirm this request shape against a live store.
+                "x-api-version": "12",
+            },
+        )
+        opener = self.transport or urllib.request.urlopen
+        try:
+            with opener(request, timeout=30.0) as response:
+                response.read()
+        except OSError as exc:
+            raise BlobDeleteError(f"failed to delete {url!r} from Vercel Blob") from exc
 
 
 class _BlobResponse(Protocol):
