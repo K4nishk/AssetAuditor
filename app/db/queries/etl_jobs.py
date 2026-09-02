@@ -17,6 +17,18 @@ _ENQUEUE_SQL = """
               error, created_at, updated_at
 """
 
+# Manual-entry forms (KCH-55 / AA-20) parse synchronously inside the API
+# request itself — there is no async extraction step for the worker to
+# claim, so this lands the job directly at 'needs_user' (skipping
+# pending/claimed/parsing) for the same parse-confirm screen (AA-17) every
+# other upload uses.
+_INSERT_NEEDS_USER_SQL = """
+    insert into public.etl_jobs (user_id, bronze_file_id, status)
+    values ($1, $2, 'needs_user')
+    returning id, user_id, bronze_file_id, status, claimed_by, claimed_at,
+              error, created_at, updated_at
+"""
+
 _GET_STATUS_BY_BRONZE_FILE_SQL = """
     select id, user_id, bronze_file_id, status, claimed_by, claimed_at,
            error, created_at, updated_at
@@ -50,6 +62,12 @@ async def enqueue_job(
     conn: asyncpg.Connection, *, user_id: str, bronze_file_id: str
 ) -> asyncpg.Record:
     return await conn.fetchrow(_ENQUEUE_SQL, user_id, bronze_file_id)
+
+
+async def insert_needs_user_job(
+    conn: asyncpg.Connection, *, user_id: str, bronze_file_id: str
+) -> asyncpg.Record:
+    return await conn.fetchrow(_INSERT_NEEDS_USER_SQL, user_id, bronze_file_id)
 
 
 async def get_job_status_for_bronze_file(
