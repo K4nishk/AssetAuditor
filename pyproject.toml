@@ -35,7 +35,11 @@ target-version = "py311"
 extend-exclude = ["ops"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# S608 = flake8-bandit "possible SQL injection via string-based query construction":
+# catches f-strings, %-formatting, .format(), and concatenation used to build SQL.
+# This is CLAUDE.md's hard rule #3 ("raw SQL, parameterized only") as a CI gate
+# (AA-3) — every other bandit check is out of scope for this issue.
+select = ["E", "F", "I", "UP", "B", "S608"]
 
 [tool.mypy]
 python_version = "3.11"
