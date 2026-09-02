@@ -1,0 +1,61 @@
+# Retention sweeper stale alert (AA-19) — Grafana unified-alerting
+# provisioning file (apiVersion 1: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/).
+#
+# Definition only. AA-27 ("Metrics wiring — worker /metrics + Alloy scrape,
+# API batched remote_write, Grafana dashboards + 3 alerts") owns actually
+# mounting this into a running Grafana Cloud instance (provisioning path,
+# contact points, notification policy) once GRAFANA_CLOUD_* secrets exist —
+# see .env.example and docs/vault/30-architecture/Observability.md's
+# "retention_sweeper_last_success_timestamp (alert if stale > 26h)" entry.
+#
+# Emitted by worker/metrics.py from worker/retention.py's
+# run_retention_sweep, refreshed by worker/main.py's retention_sweep_loop.
+# `26h` mirrors app/domain/retention_status.py's ALERT_STALE_THRESHOLD —
+# keep the two in sync if either changes.
+#
+# severity: critical (not "warning" like stale_while_queued_alert.yaml) —
+# mvp.md's AA-19 spec is explicit: "Treat sweeper-stale as a privacy
+# incident." A stale sweeper means bronze files/job logs are silently
+# overstaying the TTLs in docs/vault/20-domain/Data-Retention-and-Privacy.md.
+#
+# Unverified: no Grafana Cloud account/credentials exist in this sandbox;
+# this file has never been applied to a real Grafana instance.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: retention-sweeper
+    folder: AssetAuditor
+    interval: 15m
+    rules:
+      - uid: retention-sweeper-stale
+        title: Retention sweeper stale (privacy incident)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: grafanacloud-prom
+            model:
+              expr: time() - retention_sweeper_last_success_timestamp
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: math
+              # 93600s == app/domain/retention_status.py's ALERT_STALE_THRESHOLD (26h).
+              expression: "$A > 93600"
+              refId: C
+        for: 15m
+        labels:
+          severity: critical
+          area: privacy
+        annotations:
+          summary: >-
+            The retention sweeper hasn't succeeded in over 26h — bronze
+            files/job logs may be overstaying their TTL. Treat as a privacy
+            incident (docs/vault/20-domain/Data-Retention-and-Privacy.md);
+            check the worker box (worker/bring-up.md) and worker.retention
+            logs.
