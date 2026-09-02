@@ -100,21 +100,34 @@ def _account_draft(account: AccountInput) -> tuple[StagedRowDraft, str]:
 def build_portfolio_drafts(entry: PortfolioEntryInput) -> list[StagedRowDraft]:
     """One `account` + one `holding` (+ one `lot` per typed lot) draft.
 
-    A holding needs a value: either an explicit `avg_cost` or at least one
-    lot to derive a weighted-average cost from (`app.domain.gold.value_holding`
-    treats a holding with neither as worthless, per its own docstring).
+    A holding needs a value: either an explicit `avg_cost` or lots that a
+    weighted-average cost can actually be derived from (`app.domain.gold.
+    value_holding` treats a holding with neither as worthless, per its own
+    docstring).
+
+    "At least one lot" is not the same requirement. `_weighted_avg_cost` skips
+    lots with no `unit_cost`, so a lot list carrying only quantities derives to
+    `None` and used to produce a holding with `avg_cost: None` — silently
+    worthless rather than rejected. The check is therefore on derivability, not
+    on the collection being non-empty.
     """
     if entry.quantity <= 0:
         raise ManualEntryValidationError("quantity must be positive")
-    if entry.avg_cost is None and not entry.lots:
-        raise ManualEntryValidationError("provide avg_cost or at least one lot")
+
+    derived_avg_cost: Decimal | None = None
+    if entry.avg_cost is None:
+        derived_avg_cost = _weighted_avg_cost(entry.lots)
+        if derived_avg_cost is None:
+            raise ManualEntryValidationError(
+                "provide avg_cost, or at least one lot with a unit_cost to derive it from"
+            )
 
     account_draft, mask = _account_draft(entry.account)
     ticker = entry.ticker.strip().upper()
     if not ticker:
         raise ManualEntryValidationError("ticker must not be empty")
 
-    avg_cost = entry.avg_cost if entry.avg_cost is not None else _weighted_avg_cost(entry.lots)
+    avg_cost = entry.avg_cost if entry.avg_cost is not None else derived_avg_cost
 
     holding_draft = StagedRowDraft(
         entity="holding",

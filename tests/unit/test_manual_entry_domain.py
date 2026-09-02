@@ -85,8 +85,39 @@ def test_build_portfolio_drafts_derives_avg_cost_from_lots() -> None:
 def test_build_portfolio_drafts_requires_avg_cost_or_lots() -> None:
     entry = PortfolioEntryInput(account=ACCOUNT, ticker="AAPL", quantity=Decimal("10"))
 
-    with pytest.raises(ManualEntryValidationError, match="avg_cost or"):
+    with pytest.raises(ManualEntryValidationError, match="avg_cost"):
         build_portfolio_drafts(entry)
+
+
+def test_build_portfolio_drafts_rejects_lots_with_no_derivable_cost() -> None:
+    """Lots without a `unit_cost` derive to None, so a non-empty lot list is not
+    enough — this used to build a holding with `avg_cost: None`, which
+    `value_holding` reads as worthless rather than as missing data."""
+    entry = PortfolioEntryInput(
+        account=ACCOUNT,
+        ticker="AAPL",
+        quantity=Decimal("10"),
+        lots=[LotInput(quantity=Decimal("5")), LotInput(quantity=Decimal("5"))],
+    )
+
+    with pytest.raises(ManualEntryValidationError, match="unit_cost"):
+        build_portfolio_drafts(entry)
+
+
+def test_build_portfolio_drafts_derives_cost_from_the_lots_that_have_one() -> None:
+    """A partially-costed lot list is still derivable: the costed lots carry it."""
+    entry = PortfolioEntryInput(
+        account=ACCOUNT,
+        ticker="AAPL",
+        quantity=Decimal("10"),
+        lots=[
+            LotInput(quantity=Decimal("5")),
+            LotInput(quantity=Decimal("5"), unit_cost=Decimal("30")),
+        ],
+    )
+
+    holding = next(d for d in build_portfolio_drafts(entry) if d.entity == "holding")
+    assert holding.payload["avg_cost"] == Decimal("30")
 
 
 def test_build_portfolio_drafts_rejects_nonpositive_quantity() -> None:
