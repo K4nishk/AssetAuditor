@@ -11,6 +11,7 @@ token/sha256/content-type checks that gate whether a write happens at all.
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -319,7 +320,60 @@ def test_upload_status_returns_the_jobs_current_state():
         "bronze_file_id": BRONZE_FILE_ID,
         "status": "parsing",
         "error": None,
+        "worker_online": None,
+        "message": None,
     }
+
+
+def test_upload_status_reports_worker_online_for_a_pending_job_with_a_fresh_heartbeat():
+    fresh = datetime.now(UTC) - timedelta(seconds=5)
+    _override_conn(
+        [
+            {"bronze_file_id": BRONZE_FILE_ID, "status": "pending", "error": None},
+            {"id": 1, "last_beat_at": fresh, "status": "online"},
+        ]
+    )
+
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["worker_online"] is True
+    assert body["message"] == "queued — your worker will process it shortly"
+
+
+def test_upload_status_reports_worker_offline_for_a_pending_job_with_a_stale_heartbeat():
+    stale = datetime.now(UTC) - timedelta(hours=3)
+    _override_conn(
+        [
+            {"bronze_file_id": BRONZE_FILE_ID, "status": "pending", "error": None},
+            {"id": 1, "last_beat_at": stale, "status": "online"},
+        ]
+    )
+
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["worker_online"] is False
+    assert body["message"] == "queued — will process when your worker is online"
+
+
+def test_upload_status_reports_worker_offline_when_no_heartbeat_row_exists_yet():
+    _override_conn(
+        [
+            {"bronze_file_id": BRONZE_FILE_ID, "status": "pending", "error": None},
+            None,
+        ]
+    )
+
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["worker_online"] is False
+    assert body["message"] == "queued — will process when your worker is online"
 
 
 def test_upload_status_404s_for_an_unknown_bronze_file():

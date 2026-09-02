@@ -41,6 +41,11 @@ _RELEASE_JOB_SQL = """
     returning id, status, error
 """
 
+# Cross-user by design, same as the claim query above — feeds the
+# `etl_jobs_queued` gauge (AA-34) that pairs with `worker_heartbeat_timestamp`
+# for the stale-while-queued alert (docs/vault/30-architecture/Observability.md).
+_COUNT_QUEUED_JOBS_SQL = "select count(*) from public.etl_jobs where status = 'pending'"
+
 _VALID_STATUSES = frozenset({"pending", "claimed", "parsing", "needs_user", "done", "failed"})
 
 # Which `expected_status` a job may move on from, and what it may become.
@@ -56,6 +61,11 @@ _ALLOWED_TRANSITIONS = {
 async def claim_next_job(conn: asyncpg.Connection, *, claimed_by: str) -> asyncpg.Record | None:
     """Atomically claim the oldest pending job, or return `None` if the queue is empty."""
     return await conn.fetchrow(_CLAIM_NEXT_JOB_SQL, claimed_by)
+
+
+async def count_queued_jobs(conn: asyncpg.Connection) -> int:
+    """Count `etl_jobs` still waiting to be claimed, for the `etl_jobs_queued` gauge."""
+    return await conn.fetchval(_COUNT_QUEUED_JOBS_SQL)
 
 
 async def release_job(

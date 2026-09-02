@@ -3,8 +3,9 @@
 AA-4 (deploy rails) wires the heartbeat loop below to prove the box can reach
 Supabase from docker-compose: `bring-up.md`'s smoke test. AA-11 adds
 `job_poll_loop`, claiming `etl_jobs` via `worker.queue.claim_next_job`
-(`FOR UPDATE SKIP LOCKED`). A `/metrics` endpoint is AA-34's job. Both extend
-`main()`'s loop rather than replacing it.
+(`FOR UPDATE SKIP LOCKED`). AA-34 adds the `/metrics` endpoint (`worker.metrics`)
+and the `etl_jobs_queued` gauge refresh below. All three extend `main()`'s
+loop rather than replacing it.
 
 `job_poll_loop` only claims and logs — it does not parse anything. Actual
 extraction (adapters, pdfplumber/LLM tiers) is AA-14/15/16's job; claiming a
@@ -23,7 +24,8 @@ import uuid
 
 import asyncpg
 
-from worker.queue import claim_next_job
+from worker import metrics
+from worker.queue import claim_next_job, count_queued_jobs
 
 HEARTBEAT_INTERVAL_SECONDS = 30
 JOB_POLL_INTERVAL_SECONDS = 5
@@ -48,6 +50,7 @@ _UPSERT_HEARTBEAT_SQL = """
 
 async def send_heartbeat(conn: asyncpg.Connection, status: str = "online") -> None:
     await conn.execute(_UPSERT_HEARTBEAT_SQL, status)
+    metrics.record_heartbeat()
 
 
 async def heartbeat_loop(conn: asyncpg.Connection, stop_event: asyncio.Event) -> None:
@@ -64,6 +67,7 @@ async def job_poll_loop(
 ) -> None:
     while not stop_event.is_set():
         job = await claim_next_job(conn, claimed_by=worker_id)
+        metrics.record_queue_depth(await count_queued_jobs(conn))
         if job is not None:
             logger.info(
                 "claimed etl_job %s (bronze_file_id=%s) — extraction not yet implemented",
@@ -81,6 +85,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     database_url = os.environ["WORKER_DATABASE_URL"]
     worker_id = _default_worker_id()
+    metrics_port = int(os.environ.get("WORKER_METRICS_PORT", metrics.DEFAULT_METRICS_PORT))
 
     heartbeat_conn = await asyncpg.connect(database_url)
     # A separate connection from the heartbeat's: asyncpg connections aren't
@@ -94,11 +99,14 @@ async def main() -> None:
         loop.add_signal_handler(sig, stop_event.set)
 
     try:
+        metrics.start_metrics_server(metrics_port)
         logger.info(
-            "worker starting (id=%s, heartbeat_interval=%ss, job_poll_interval=%ss)",
+            "worker starting (id=%s, heartbeat_interval=%ss, job_poll_interval=%ss, "
+            "metrics_port=%s)",
             worker_id,
             HEARTBEAT_INTERVAL_SECONDS,
             JOB_POLL_INTERVAL_SECONDS,
+            metrics_port,
         )
         await asyncio.gather(
             heartbeat_loop(heartbeat_conn, stop_event),

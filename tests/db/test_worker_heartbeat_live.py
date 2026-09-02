@@ -14,6 +14,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app.db.queries.worker_heartbeat import get_latest_heartbeat
 from worker.main import send_heartbeat
 
 MIGRATION_SQL = Path("app/db/migrations/0001_init.sql").read_text()
@@ -52,3 +53,19 @@ async def test_send_heartbeat_upserts_rather_than_duplicating(seeded_db):
     rows = await seeded_db.fetch("select id, last_beat_at from public.worker_heartbeat")
     assert len(rows) == 1
     assert rows[0]["last_beat_at"] >= first["last_beat_at"]
+
+
+async def test_get_latest_heartbeat_reads_back_what_send_heartbeat_wrote(seeded_db):
+    await send_heartbeat(seeded_db, status="online")
+
+    row = await get_latest_heartbeat(seeded_db)
+
+    assert row["id"] == 1
+    assert row["status"] == "online"
+    assert row["last_beat_at"] is not None
+
+
+async def test_get_latest_heartbeat_returns_none_before_any_heartbeat_lands(seeded_db):
+    row = await get_latest_heartbeat(seeded_db)
+
+    assert row is None
