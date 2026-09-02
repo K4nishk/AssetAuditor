@@ -27,6 +27,7 @@ class GoldenRow:
     amount: Decimal
     balance_after: Decimal
     account_mask: str
+    description: str
 
 
 def golden_chequing_rows() -> list[GoldenRow]:
@@ -46,6 +47,7 @@ def golden_chequing_rows() -> list[GoldenRow]:
                 amount=amount,
                 balance_after=Decimal(row["balance"]),
                 account_mask=row["account_mask"],
+                description=row["description"],
             )
         )
     return golden

@@ -144,14 +144,32 @@ class LlmExtractionResult:
     extraction_backend: str
 
 
-def lineage_facets(result: LlmExtractionResult) -> dict[str, Any]:
+def lineage_facets(
+    result: LlmExtractionResult, *, user_confirmed: bool = False
+) -> dict[str, Any]:
     """Facet payload for `worker.lineage.LineageEmitter` calls wrapping this tier.
 
     `extraction_backend` is the provenance detail ADR v1.1.0 §3 calls for —
     which provider (`vllm`|`groq`) actually served the extraction, since
     LiteLLM's routing/fallback means the caller can't know that in advance.
+
+    `masking_applied` is always true: `extract_transactions` runs
+    `mask_statement_text` unconditionally before the model sees a byte, and the
+    lineage record is where that guarantee becomes auditable rather than merely
+    documented — an event without the facet cannot be told apart from one where
+    masking was skipped.
+
+    `user_confirmed` rides through the same boundary so silver and gold events
+    carry it beside the extraction fields. It defaults to `False` because
+    nothing this tier emits is confirmed by anyone: AA-17's parse-confirm
+    screen is what flips it, and AA-18's silver write passes the real value.
     """
-    return {"extraction_method": "llm", "extraction_backend": result.extraction_backend}
+    return {
+        "extraction_method": "llm",
+        "extraction_backend": result.extraction_backend,
+        "masking_applied": True,
+        "user_confirmed": user_confirmed,
+    }
 
 
 def _validate_base_url(base_url: str) -> str:

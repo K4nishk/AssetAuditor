@@ -21,6 +21,10 @@ from worker.extract.pdfplumber_tier import extract as extract_pdf
 
 MIN_FIELD_ACCURACY = 0.75
 
+# Fields scored per row. Keep in step with `checks` below — the missing/extra-row
+# penalty multiplies by this, so drift here silently rescales the denominator.
+FIELDS_PER_ROW = 6
+
 pytestmark = [
     pytest.mark.llm_eval,
     pytest.mark.skipif(
@@ -46,13 +50,20 @@ def test_scotiabank_statement_golden_set() -> None:
             payload.get("kind") == expected.kind,
             payload.get("amount") == expected.amount,
             payload.get("balance_after") == expected.balance_after,
+            # Case/whitespace are the model's to vary; the merchant text is not.
+            str(payload.get("description", "")).strip().casefold()
+            == expected.description.strip().casefold(),
+            # The mask is what ties a row to an account — a wrong one misfiles the
+            # transaction entirely, so it is scored, not assumed.
+            payload.get("account_mask") == expected.account_mask,
         ]
+        assert len(checks) == FIELDS_PER_ROW
         matched += sum(checks)
         total_checks += len(checks)
 
     # Rows the model missed or invented entirely still count against accuracy,
     # rather than silently shrinking the denominator.
-    total_checks += abs(len(golden) - len(result.drafts)) * 4
+    total_checks += abs(len(golden) - len(result.drafts)) * FIELDS_PER_ROW
     accuracy = matched / total_checks if total_checks else 0.0
 
     print(f"golden-set field accuracy: {accuracy:.2%} ({matched}/{total_checks})")

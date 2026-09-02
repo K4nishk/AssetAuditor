@@ -21,6 +21,7 @@ from worker.extract.llm_tier import (
     MODEL_GROUP,
     LlmEndpointNotApprovedError,
     LlmExtractionError,
+    LlmExtractionResult,
     _client,
     _resolve_client,
     _validate_base_url,
@@ -230,7 +231,27 @@ def test_extraction_backend_reads_vllm_prefix() -> None:
 def test_lineage_facets_carries_backend_and_method() -> None:
     client = FakeClient([_row()], model="groq/llama-3.3-70b-versatile")
     result = extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
-    assert lineage_facets(result) == {"extraction_method": "llm", "extraction_backend": "groq"}
+    assert lineage_facets(result) == {
+        "extraction_method": "llm",
+        "extraction_backend": "groq",
+        "masking_applied": True,
+        "user_confirmed": False,
+    }
+
+
+def test_lineage_facets_always_record_masking() -> None:
+    """This tier masks unconditionally; the facet is how that becomes auditable
+    downstream instead of a promise in a docstring."""
+    result = LlmExtractionResult(drafts=[], extraction_backend="vllm")
+    assert lineage_facets(result)["masking_applied"] is True
+
+
+def test_lineage_facets_propagate_user_confirmation() -> None:
+    """Nothing this tier emits is confirmed, so the default is False; AA-17's
+    confirm screen is what flips it and AA-18 passes the real value through."""
+    result = LlmExtractionResult(drafts=[], extraction_backend="groq")
+    assert lineage_facets(result)["user_confirmed"] is False
+    assert lineage_facets(result, user_confirmed=True)["user_confirmed"] is True
 
 
 # --- malformed responses ---------------------------------------------------------

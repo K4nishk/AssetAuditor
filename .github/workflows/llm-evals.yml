@@ -3,8 +3,17 @@ name: LLM evals
 on:
   pull_request:
     paths:
+      # Everything the eval actually exercises. The tier alone was too narrow:
+      # it consumes pdfplumber's text, masks through worker/masking.py, builds
+      # drafts via adapters/base.py and scores against data/samples — a change
+      # to any of those can move the golden-set result without touching
+      # llm_tier.py, and the eval would not have run.
       - "worker/extract/llm_tier.py"
+      - "worker/extract/pdfplumber_tier.py"
+      - "worker/masking.py"
+      - "worker/adapters/base.py"
       - "llm/litellm.config.yaml"
+      - "data/samples/**"
       - "tests/evals/**"
       - ".github/workflows/llm-evals.yml"
   workflow_dispatch: {}
@@ -20,12 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # AA-16 (this workflow's own issue) wires GROQ_API_KEY/LITELLM_MASTER_KEY
-      # as repo secrets — provisioning a Groq account is a manual step for the
-      # owner (CLAUDE.md zero-cost contract: no cloud credentials exist in the
-      # agent sandbox that authored this file). Until they're set, report a
-      # clear notice and pass instead of blocking every PR on a dependency
-      # this issue can't provision for itself.
+      # A required check that goes green without running is worse than no check:
+      # it reports "evals passed" on a PR nothing was evaluated on. Missing
+      # secrets therefore fail the job. Provisioning Groq is a manual owner step
+      # (CLAUDE.md zero-cost contract), so until it is done this job is red on
+      # PRs touching the paths above — which is the honest signal.
       - name: Check Groq/LiteLLM secrets
         id: check
         env:
@@ -38,10 +46,11 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Skip notice
+      - name: Fail when the eval cannot run
         if: steps.check.outputs.configured != 'true'
         run: |
-          echo "::notice::GROQ_API_KEY / LITELLM_MASTER_KEY are not set yet — skipping the live golden-set eval. This starts enforcing automatically once those repo secrets exist."
+          echo "::error::GROQ_API_KEY / LITELLM_MASTER_KEY are not set, so the golden-set eval did not run. Add them under Settings -> Secrets and variables -> Actions. Note ops/.env.local is read only by the local orchestrator and never reaches CI."
+          exit 1
 
       - name: Install uv
         if: steps.check.outputs.configured == 'true'
