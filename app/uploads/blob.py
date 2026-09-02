@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import urllib.request
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -42,6 +43,14 @@ class BlobStorage(Protocol):
 
     def delete(self, url: str) -> None:
         """Delete the blob at `url` (AA-19's retention sweeper)."""
+        ...
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every blob whose pathname starts with `prefix`; returns the
+        count deleted (AA-10's account purge — bronze/silver/gold all key
+        their pathnames off `{layer}/{user_id}/...`, so one prefix per layer
+        clears everything for a deleted account without a DB row to look up
+        the exact pathname from, unlike `delete`)."""
         ...
 
 
@@ -109,6 +118,65 @@ class VercelBlobStorage:
                 response.read()
         except OSError as exc:
             raise BlobDeleteError(f"failed to delete {url!r} from Vercel Blob") from exc
+
+    def delete_prefix(self, prefix: str) -> int:
+        """AA-10's account purge: silver/gold pathnames are deterministic
+        (`{layer}/{user_id}/...`, `worker.gold.silver_pathname`/`gold_pathname`)
+        but no DB table records the URLs Vercel Blob handed back for them, so
+        this lists the prefix first rather than trying to re-derive URLs."""
+        urls = self._list_urls(prefix)
+        if not urls:
+            return 0
+
+        request = urllib.request.Request(  # noqa: S310 - fixed https host, not user input
+            f"{_BLOB_API_BASE}/delete",
+            data=json.dumps({"urls": urls}).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "content-type": "application/json",
+                # Same unverified caveat as `put`/`delete`.
+                "x-api-version": "12",
+            },
+        )
+        opener = self.transport or urllib.request.urlopen
+        try:
+            with opener(request, timeout=30.0) as response:
+                response.read()
+        except OSError as exc:
+            raise BlobDeleteError(f"failed to delete prefix {prefix!r} from Vercel Blob") from exc
+        return len(urls)
+
+    def _list_urls(self, prefix: str) -> list[str]:
+        """Page through Vercel Blob's list endpoint collecting every URL under `prefix`."""
+        urls: list[str] = []
+        cursor: str | None = None
+        opener = self.transport or urllib.request.urlopen
+        while True:
+            query = f"prefix={urllib.parse.quote(prefix)}"
+            if cursor:
+                query += f"&cursor={urllib.parse.quote(cursor)}"
+            request = urllib.request.Request(  # noqa: S310 - fixed https host, not user input
+                f"{_BLOB_API_BASE}/?{query}",
+                method="GET",
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "x-api-version": "12",
+                },
+            )
+            try:
+                with opener(request, timeout=30.0) as response:
+                    body = json.loads(response.read())
+            except (OSError, ValueError) as exc:
+                raise BlobDeleteError(
+                    f"failed to list prefix {prefix!r} from Vercel Blob"
+                ) from exc
+
+            urls.extend(blob["url"] for blob in body.get("blobs", []))
+            cursor = body.get("cursor")
+            if not body.get("hasMore") or not cursor:
+                break
+        return urls
 
 
 class _BlobResponse(Protocol):

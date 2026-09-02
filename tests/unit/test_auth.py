@@ -16,9 +16,10 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 from jwt.algorithms import ECAlgorithm
 
-from app.auth import JWKSCache, decode_supabase_jwt
+from app.auth import JWKSCache, decode_supabase_jwt, get_current_claims
 
 KID = "test-key-1"
 AUDIENCE = "authenticated"
@@ -158,3 +159,32 @@ class TestJWKSCache:
 
         with pytest.raises(JWKSFetchError):
             cache.get_key("missing")
+
+
+class TestGetCurrentClaims:
+    """AA-10's addition: the full claim set, not just `sub` — used to check
+    the `iat` freshness gate on `DELETE /account`."""
+
+    def test_returns_the_full_claim_set_including_iat(self, keypair, cache, monkeypatch):
+        private_key, _ = keypair
+        issued_at = int(time.time())
+        token = jwt.encode(
+            {"sub": "00000000-0000-0000-0000-000000000001", "aud": AUDIENCE, "iat": issued_at,
+             "exp": issued_at + 3600},
+            private_key,
+            algorithm="ES256",
+            headers={"kid": KID},
+        )
+        monkeypatch.setattr("app.auth._get_cache", lambda: cache)
+        monkeypatch.setenv("SUPABASE_JWT_AUD", AUDIENCE)
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+        claims = get_current_claims(credentials)
+
+        assert claims["sub"] == "00000000-0000-0000-0000-000000000001"
+        assert claims["iat"] == issued_at
+
+    def test_missing_credentials_is_401(self):
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_claims(None)
+        assert exc_info.value.status_code == 401
