@@ -95,18 +95,15 @@ async def rebuild_gold(
                 if blob is not None
                 else None
             )
-
-        silver_paths: dict[str, str] | None = None
-        gold_csv_paths: dict[str, str] | None = None
-        if blob is not None and entity_rows is not None:
-            silver_paths = write_silver_parquet(entity_rows, blob=blob, user_id=user_id)
-            gold_csv_paths = write_gold_csv(
-                totals, blob=blob, user_id=user_id, snapshot_date=snapshot_date
-            )
     except Exception as exc:
         await lineage.fail("gold_rebuild", error=str(exc))
         raise
 
+    # `gold_rebuild` is marked COMPLETE here, before any Blob I/O: the
+    # transaction above has already committed the gold tables and room
+    # events, so a later export failure must not retroactively read as "the
+    # rebuild failed" — that would misrepresent already-durable Postgres
+    # state to anything following lineage (CodeRabbit KCH-53 round 2).
     await lineage.complete(
         "gold_rebuild",
         facets={
@@ -116,6 +113,23 @@ async def rebuild_gold(
             "room_events_written": room_events_written,
         },
     )
+
+    silver_paths: dict[str, str] | None = None
+    gold_csv_paths: dict[str, str] | None = None
+    if blob is not None and entity_rows is not None:
+        await lineage.start("gold_export")
+        try:
+            silver_paths = write_silver_parquet(entity_rows, blob=blob, user_id=user_id)
+            gold_csv_paths = write_gold_csv(
+                totals, blob=blob, user_id=user_id, snapshot_date=snapshot_date
+            )
+        except Exception as exc:
+            await lineage.fail("gold_export", error=str(exc))
+            raise
+        await lineage.complete(
+            "gold_export",
+            facets={"silver_paths": silver_paths, "gold_csv_paths": gold_csv_paths},
+        )
 
     return GoldRebuildResult(
         totals=totals,
