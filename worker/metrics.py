@@ -13,6 +13,11 @@ worker/observability/stale_while_queued_alert.yaml).
 `retention_sweeper_last_success_timestamp` (AA-19) is the same pattern for
 `worker/retention.py`'s nightly sweep — read by
 worker/observability/retention_sweeper_stale_alert.yaml.
+
+`price_refresh_last_success_timestamp` (AA-21) is the same pattern again,
+for `worker/prices.py`'s daily refresh; no alert yaml yet (a stale price
+feed isn't a privacy incident like AA-19's sweeper), left for AA-27's
+broader Grafana wiring pass.
 """
 
 from __future__ import annotations
@@ -35,6 +40,10 @@ RETENTION_SWEEPER_LAST_SUCCESS_TIMESTAMP = Gauge(
     "retention_sweeper_last_success_timestamp",
     "Unix timestamp of worker.retention's last fully-successful sweep (AA-19).",
 )
+PRICE_REFRESH_LAST_SUCCESS_TIMESTAMP = Gauge(
+    "price_refresh_last_success_timestamp",
+    "Unix timestamp of worker.prices's last fully-successful refresh (AA-21).",
+)
 
 
 def record_heartbeat(*, when: float | None = None) -> None:
@@ -47,6 +56,10 @@ def record_queue_depth(count: int) -> None:
 
 def record_sweeper_success(*, when: float | None = None) -> None:
     RETENTION_SWEEPER_LAST_SUCCESS_TIMESTAMP.set(when if when is not None else time.time())
+
+
+def record_price_refresh_success(*, when: float | None = None) -> None:
+    PRICE_REFRESH_LAST_SUCCESS_TIMESTAMP.set(when if when is not None else time.time())
 
 
 def start_metrics_server(port: int = DEFAULT_METRICS_PORT) -> None:

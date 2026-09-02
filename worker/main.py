@@ -19,6 +19,11 @@ is what lets `retention_sweeper_last_success_timestamp` behave like the other
 worker gauges: a normal in-memory Prometheus value scraped off `/metrics`,
 per docs/vault/10-mental-models/Push-Dont-Scrape-Metrics.md ("the long-lived
 ETL worker can still expose a normal /metrics scrape target").
+
+AA-21 adds `price_refresh_loop`, same shape again, running
+`worker.prices.refresh_prices` once a day — the "daily cron" mvp.md's AA-21
+describes; `python -m worker.prices` (see that module's docstring) covers
+the "on-demand refresh" half of the same issue.
 """
 
 from __future__ import annotations
@@ -34,12 +39,14 @@ import asyncpg
 
 from app.uploads.blob import BlobStorage, get_blob_storage
 from worker import metrics
+from worker.prices import PriceFetcher, YFinancePriceFetcher, refresh_prices
 from worker.queue import claim_next_job, count_queued_jobs
 from worker.retention import run_retention_sweep
 
 HEARTBEAT_INTERVAL_SECONDS = 30
 JOB_POLL_INTERVAL_SECONDS = 5
 RETENTION_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
+PRICE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
 
 logger = logging.getLogger("worker")
 
@@ -116,6 +123,31 @@ async def retention_sweep_loop(
             pass
 
 
+async def price_refresh_loop(
+    conn: asyncpg.Connection, stop_event: asyncio.Event, *, fetcher: PriceFetcher
+) -> None:
+    while not stop_event.is_set():
+        try:
+            result = await refresh_prices(conn, fetcher=fetcher)
+            logger.info(
+                "price refresh complete: prices_written=%s fx_written=%s symbols_failed=%s",
+                result.prices_written,
+                result.fx_written,
+                result.symbols_failed,
+            )
+        except Exception:
+            # Same deliberately-broad convention as retention_sweep_loop: a
+            # failed refresh must not crash the whole worker process, and
+            # must not record a false success — the gauge staying stale is
+            # the intended signal that the next scheduled/on-demand run
+            # still needs to happen.
+            logger.exception("price refresh failed; will retry next interval")
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=PRICE_REFRESH_INTERVAL_SECONDS)
+        except TimeoutError:
+            pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     database_url = os.environ["WORKER_DATABASE_URL"]
@@ -128,6 +160,7 @@ async def main() -> None:
     # concurrently for the whole process lifetime.
     queue_conn = await asyncpg.connect(database_url)
     retention_conn = await asyncpg.connect(database_url)
+    price_conn = await asyncpg.connect(database_url)
     stop_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -138,22 +171,25 @@ async def main() -> None:
         metrics.start_metrics_server(metrics_port)
         logger.info(
             "worker starting (id=%s, heartbeat_interval=%ss, job_poll_interval=%ss, "
-            "retention_sweep_interval=%ss, metrics_port=%s)",
+            "retention_sweep_interval=%ss, price_refresh_interval=%ss, metrics_port=%s)",
             worker_id,
             HEARTBEAT_INTERVAL_SECONDS,
             JOB_POLL_INTERVAL_SECONDS,
             RETENTION_SWEEP_INTERVAL_SECONDS,
+            PRICE_REFRESH_INTERVAL_SECONDS,
             metrics_port,
         )
         await asyncio.gather(
             heartbeat_loop(heartbeat_conn, stop_event),
             job_poll_loop(queue_conn, stop_event, worker_id=worker_id),
             retention_sweep_loop(retention_conn, stop_event, blob=get_blob_storage()),
+            price_refresh_loop(price_conn, stop_event, fetcher=YFinancePriceFetcher()),
         )
     finally:
         await heartbeat_conn.close()
         await queue_conn.close()
         await retention_conn.close()
+        await price_conn.close()
 
 
 if __name__ == "__main__":
