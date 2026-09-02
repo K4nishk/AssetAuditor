@@ -896,6 +896,13 @@ _Spec: \`mvp.md\` ($identifier) · Architecture: \`docs/adr/ADR_v1.1.0.md\`_" \
   esac
   post_merge_sequence "$pr_number"
   cr_pr_followup "$pr_number" "$issue_uuid"
+  # Publish the gate's evidence and set a real commit status. The badge in the body
+  # above is an assertion; ops/logs is gitignored, so without this GitHub has no way
+  # to show what was found or that it was answered — and nothing to block a merge on.
+  "$OPS_DIR/pr_gate.sh" --pr "$pr_number" --apply >/dev/null 2>&1 \
+    && log "$identifier: PR #$pr_number gate evidence published." \
+    || log "$identifier: WARN — could not publish gate evidence for PR #$pr_number."
+
 
   comment_on_issue "$issue_uuid" "✅ Agent finished. PR: $pr_url (base \`$base_branch\`) — awaiting human review, will NOT auto-merge.
 

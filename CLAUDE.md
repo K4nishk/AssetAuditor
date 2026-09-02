@@ -80,6 +80,37 @@ The orchestrator, the sweeper and the build scheduler share one git worktree and
 - Keep `ops/` state files out of commits (`.gitignore` already lists them). Removing those lines breaks the run's memory across issues.
 - Scope discipline matters more than usual: nobody is watching, and an out-of-scope refactor lands in someone else's stacked PR.
 
+## Between builds — settle the review debt (owner)
+
+**Hand-run the sweeper after every build, before starting the next one:**
+
+```bash
+./ops/review_sweeper.sh
+```
+
+Do not rely on the hourly launchd sweeper. Under macOS TCC a LaunchAgent's child shell
+cannot read `~/Documents`, so `com.assetauditor.review-sweeper` exits 1 having done
+nothing — and says so only in `ops/logs/sweeper.err.log`, which nobody reads. It had
+failed five consecutive times before anyone noticed. Until that is fixed, a hand-run is
+the **only** thing that settles deferred CodeRabbit reviews.
+
+It matters most exactly where it is easiest to skip. Roughly a third of the remaining
+backlog — the LiteLLM tier, prices, Blob writes, metrics wiring, the security audits —
+cannot be verified on this machine at all. Tests prove nothing there, so the CodeRabbit
+review is the only quality signal those PRs will ever get.
+
+**The one exception:** skip the sweep when CodeRabbit's own quota is exhausted. There
+are no reviews left to spend, so it can only no-op; the debt stays banked and the next
+sweep settles it. Check first:
+
+```bash
+./ops/review_sweeper.sh --status
+```
+
+Running it anyway is harmless rather than wrong — it exits cleanly on an empty ledger,
+reuses saved findings without spending quota, and stops the moment CodeRabbit reports a
+rate limit, leaving the debt intact.
+
 ## Interactive tmux sessions (owner, on a subscription budget)
 - One session = one `AA-n`/Linear issue, or one tight cluster from the same milestone. Name it after the issue: `tmux new -s ASA-14`.
 - Start prompts with the issue ID; let this file and the read-first map carry context instead of pasting docs.

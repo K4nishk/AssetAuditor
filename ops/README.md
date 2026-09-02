@@ -16,6 +16,7 @@ it running without supervision; you review PRs at your own pace.
 | `review_sweeper.sh` | settles deferred CodeRabbit reviews from the debt ledger |
 | `install_sweeper.sh` | installs/removes the hourly review agent |
 | `remediate_prs.sh` | answers CodeRabbit's **PR comments** on open PRs, bottom-up, in place |
+| `pr_gate.sh` | publishes the CLI gate's findings→fix trail to the PR and sets the `coderabbit/cli-gate` status |
 
 State (all gitignored, all local): `.completed_issues` · `.review_debt.tsv` ·
 `.agent_contracts.md` · `.issue_map.tsv` · `queue.tsv` · `.env.local` · `logs/`
@@ -106,7 +107,48 @@ Passing one does not answer the others. See CLAUDE.md for the binding protocol.
    a PR opens. Pushes to the **same branch**, so the stack never deepens.
 3. **Deferred review** (`review_sweeper.sh`) — CodeRabbit's free tier allows 8 reviews
    per replenishing window. When it runs dry the build does **not** wait: the debt is
-   banked in `.review_debt.tsv` and settled hourly.
+   banked in `.review_debt.tsv`. It is **settled by hand, not hourly** — see the rule
+   below; the launchd sweeper is currently dead.
+
+### The PR gate — `coderabbit/cli-gate`
+
+The CLI gate runs **pre-push**, so a PR's fix commits are already in its first commit
+set and its findings sit in gitignored `ops/logs/`. From GitHub the body badge was an
+unverifiable claim with no check behind it. `pr_gate.sh` republishes, per PR, every
+finding by round, the commit that answered it, and the final re-review — then sets a
+`coderabbit/cli-gate` commit status.
+
+```bash
+./ops/pr_gate.sh                    # dry run over open PRs
+./ops/pr_gate.sh --apply            # post comments, set statuses
+./ops/pr_gate.sh --render KCH-50 --branch origin/feature/kch-50   # offline preview
+```
+
+`orchestrator.sh` calls it automatically after opening each PR. Make
+`coderabbit/cli-gate` a **required status check** on `development` so an unreviewed or
+unresolved branch cannot merge. It needs no Claude — bash, `gh` and the logs only, so
+it still works while the spend limit is hit.
+
+Status is `success` only when the final round returned zero blocking findings
+(`critical|major|blocker|high`). Never reviewed, or blocking findings still open →
+`failure`.
+
+### Run the sweeper after every build, before the next one
+
+```bash
+./ops/review_sweeper.sh            # then check: --status prints the debt ledger
+```
+
+The hourly agent cannot be trusted to do it. macOS TCC blocks a LaunchAgent's child
+shell from reading `~/Documents`, so `com.assetauditor.review-sweeper` exits 1 without
+sweeping and without complaining anywhere you'd look (`runs = 5, last exit code = 1`
+before it was spotted). A hand-run from your own terminal works — that is where TCC
+grants access.
+
+**Skip it only when CodeRabbit's quota is exhausted**: no reviews left to spend means
+the sweep can only no-op, and the debt keeps until the window replenishes. Otherwise
+run it. Roughly a third of the remaining backlog cannot be tested on this machine at
+all, so for those PRs the deferred review is the only check that will ever run.
 
 **Claude and CodeRabbit quotas are independent.** Claude out of credit → the sweeper
 still reviews, publishes findings to the PR and Linear, and parks the branch as
