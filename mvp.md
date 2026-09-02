@@ -55,6 +55,7 @@ Issue IDs are stable (`AA-n`) so tmux build sessions can reference them.
 - **AA-28 Amplitude events (behaviour-only)** — event schema review gate in CI: payloads containing amount/ticker/account fields fail. deps: AA-22.
 - **AA-29 Security pass** — pgsodium column crypto for sensitive mapping table, `pip-audit`/`npm audit` gates, threat-table review vs `docs/vault/30-architecture/Security-Model.md`, e2e run of `skills/e2e-testing/SKILL.md` deletion + masking checklists. deps: M2, M3.
 - **AA-30 Per-user derived encryption keys (stretch)** — deps: AA-29.
+- **AA-35 llm-evals path filters miss dependency-only changes** — add `pyproject.toml` and `uv.lock` to `.github/workflows/llm-evals.yml`'s `pull_request.paths`, so a dependency bump that moves extraction output still schedules the golden-set eval. Two lines; do it by hand rather than spending an agent run. Raised by CodeRabbit on AA-16 round 5 and deferred out of that PR — see `ops/deferred_findings.tsv`. deps: AA-16.
 
 ## M5 — Showcase
 - **AA-31 MDX blog page in-app + repo wiki polish** — architecture story with the mermaid diagrams; screenshots from mock-user data only. deps: M3.

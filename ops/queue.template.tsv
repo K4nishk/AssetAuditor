@@ -63,6 +63,9 @@
 8	AA-27	yes
 8	AA-28	yes
 8	AA-29	no
+# Deferred out of AA-16's review loop (CodeRabbit round 5). Two lines of YAML —
+# see ops/deferred_findings.tsv for why it is here rather than in AA-16.
+8	AA-35	yes
 
 # Tier 9 — showcase.
 9	AA-32	yes
