@@ -13,6 +13,11 @@ on:
       - "worker/masking.py"
       - "worker/adapters/base.py"
       - "llm/litellm.config.yaml"
+      # A lock bump can move extraction output on its own: the job runs
+      # `uv sync --frozen` and then exercises openai and pdfplumber end to end,
+      # so a dependency-only PR must schedule the eval too (KCH-71 / AA-35).
+      - "pyproject.toml"
+      - "uv.lock"
       - "data/samples/**"
       - "tests/evals/**"
       - ".github/workflows/llm-evals.yml"

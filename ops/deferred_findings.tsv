@@ -7,4 +7,6 @@
 # it needs a real Linear id and a reason someone can argue with.
 #
 # issue<TAB>round<TAB>file<TAB>linear<TAB>rationale
-KCH-51	5	.github/workflows/llm-evals.yml	KCH-71	Path filter omits pyproject.toml/uv.lock, so a dependency-only PR does not schedule the eval. Latent until GROQ_API_KEY is live; failure mode is a missed trigger, not a wrong result. Deferred to end a five-round loop that was gating PRs #16-#19 and everything stacked above them.
+# RESOLVED 2026-09-02: KCH-71 fixed by hand on development once KCH-51 merged.
+# Kept as the record of the decision — the gate no longer needs it, KCH-51 is merged.
+#KCH-51	5	.github/workflows/llm-evals.yml	KCH-71	Path filter omits pyproject.toml/uv.lock, so a dependency-only PR does not schedule the eval. Latent until GROQ_API_KEY is live; failure mode is a missed trigger, not a wrong result. Deferred to end a five-round loop that was gating PRs #16-#19 and everything stacked above them.

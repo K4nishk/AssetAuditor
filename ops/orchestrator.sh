@@ -364,6 +364,31 @@ run_agent() {
 # catches one abort cause; this catches all of them (connection drops, crashes).
 # Observed 2026-09-02: sweeps of PR #6 and #7 died on "Connection failed" and were
 # both recorded as "settled, clean", clearing the debt on unreviewed branches.
+# The fix agent is *told* to commit each round as `fix(<ISSUE>): address CodeRabbit
+# round N`, and until now nothing checked that it did. On KCH-55 it amended into its
+# feature commit instead: the fixes shipped and the branch reviewed clean, but rounds
+# 1-3 left no trace, so the PR could not show which commit answered which finding.
+# `git add -u` is tracked-only on purpose — an unattended run must never sweep a
+# stray scratch file into a reviewed PR (same rule as the pre-push commit).
+verify_fix_commit() {
+  local identifier="$1" round="$2" pre_count="$3" pre_head="$4"
+  local post_count; post_count=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+  [ "${post_count:-0}" -gt "${pre_count:-0}" ] && return 0
+
+  git add -u >/dev/null 2>&1
+  if ! git diff --cached --quiet; then
+    git commit -q -m "fix($identifier): address CodeRabbit round $round"
+    log "$identifier: fix round $round left its work uncommitted — committed it here."
+    return 0
+  fi
+  if [ "$(git rev-parse HEAD 2>/dev/null)" != "$pre_head" ]; then
+    log "$identifier: WARN — fix round $round amended an existing commit instead of adding one; the finding->fix trail for this round is lost."
+  else
+    log "$identifier: WARN — fix round $round produced no commit and no changes."
+  fi
+  return 0
+}
+
 cr_completed() {
   [ -s "$1" ] || return 1
   [ "$(grep '^{' "$1" 2>/dev/null | jq -sr 'any(.[]; .type=="complete")' 2>/dev/null)" = "true" ]
@@ -536,6 +561,9 @@ coderabbit_gate() {
     log "$identifier: sending findings back to the implementing agent (round $round)."
     comment_on_issue "$issue_uuid" "🐇 CodeRabbit raised $blocking blocking finding(s); agent is reworking (round $round/$CR_MAX_ROUNDS)."
     local fixlog="$LOG_DIR/${identifier}_fix_r${round}.json"
+    local pre_count pre_head
+    pre_count=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    pre_head=$(git rev-parse HEAD 2>/dev/null || echo "")
     run_agent "CodeRabbit reviewed your implementation of $identifier ($title) and raised blocking findings.
 
 Take this review seriously. Fix the underlying pattern, not the symptom.
@@ -570,6 +598,8 @@ Rules:
       comment_on_issue "$issue_uuid" "⏸️ Usage limit reached mid-CodeRabbit-rework. Auto-resuming after the window resets."
       sleep "$ws"
       round=$((round-1))
+    else
+      verify_fix_commit "$identifier" "$round" "$pre_count" "$pre_head"
     fi
   done
 
