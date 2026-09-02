@@ -263,16 +263,26 @@ def extract_transactions(
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise LlmExtractionError(f"LiteLLM response was not valid JSON: {content!r}") from exc
+        raise LlmExtractionError(
+            f"LiteLLM response was not valid JSON ({len(content)} chars)"
+        ) from exc
 
     if not isinstance(parsed, dict):
-        raise LlmExtractionError(f"LiteLLM response root was not a JSON object: {parsed!r}")
+        raise LlmExtractionError(
+            f"LiteLLM response root was not a JSON object (got {type(parsed).__name__})"
+        )
 
     rows = parsed.get("transactions")
     if not isinstance(rows, list):
-        raise LlmExtractionError(f"LiteLLM response missing a 'transactions' array: {parsed!r}")
-    if any(not isinstance(row, dict) for row in rows):
-        raise LlmExtractionError(f"LiteLLM 'transactions' array had a non-object entry: {rows!r}")
+        raise LlmExtractionError(
+            f"LiteLLM response missing a 'transactions' array (got {type(rows).__name__})"
+        )
+    for index, entry in enumerate(rows):
+        if not isinstance(entry, dict):
+            raise LlmExtractionError(
+                f"LiteLLM 'transactions' array had a non-object entry at index "
+                f"{index} (got {type(entry).__name__})"
+            )
 
     drafts = [
         _to_draft(row, institution_slug=institution_slug, account_mask_override=account_mask)
@@ -313,11 +323,15 @@ def _to_draft(
         account_mask = account_mask_override
         if account_mask is None and raw_account_mask is not None:
             account_mask = normalize_account_mask(str(raw_account_mask), institution_slug)
-    except (KeyError, ValueError, AdapterParseError) as exc:
-        raise LlmExtractionError(f"malformed transaction row from LiteLLM: {row!r}") from exc
+    except (KeyError, TypeError, ValueError, AdapterParseError) as exc:
+        # TypeError belongs here: `float(None)` and subscripting a non-object
+        # `confidence` both raise it, so a model answering `"confidence": null`
+        # (or a null field inside it) escaped as a bare TypeError instead of the
+        # LlmExtractionError every caller of this module catches.
+        raise LlmExtractionError("malformed transaction row from LiteLLM") from exc
 
     if kind not in ("debit", "credit"):
-        raise LlmExtractionError(f"invalid transaction kind {kind!r}: {row!r}")
+        raise LlmExtractionError(f"invalid transaction kind {kind!r}")
 
     row_confidence = min(field_confidence.values())
 

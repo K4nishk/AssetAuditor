@@ -395,6 +395,35 @@ def test_injected_sdk_client_pointed_at_the_router_is_accepted() -> None:
     assert _resolve_client(routed) is routed
 
 
+def test_null_confidence_value_becomes_an_extraction_error() -> None:
+    """`float(None)` raises TypeError, which used to escape `_to_draft`'s handler
+    and surface as a bare TypeError instead of the error every caller catches."""
+    row = _row(confidence={"occurred_at": 1.0, "description": 1.0, "kind": 1.0,
+                           "amount": None, "balance_after": 0.8, "account_mask": 1.0})
+    client = FakeClient(transactions=[row])
+    with pytest.raises(LlmExtractionError, match="malformed transaction row"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+def test_null_confidence_object_becomes_an_extraction_error() -> None:
+    """Subscripting a null `confidence` raises TypeError for the same reason."""
+    row = _row()
+    row["confidence"] = None
+    client = FakeClient(transactions=[row])
+    with pytest.raises(LlmExtractionError, match="malformed transaction row"):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+
+def test_extraction_errors_do_not_echo_statement_data() -> None:
+    """Exception text lands in logs, so it must not carry statement-derived
+    values — the whole point of masking before the model sees anything."""
+    row = _row(description="PAYROLL DEPOSIT ACME CORP", kind="not-a-kind")
+    client = FakeClient(transactions=[row])
+    with pytest.raises(LlmExtractionError) as excinfo:
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+    assert "ACME" not in str(excinfo.value)
+
+
 def test_injected_non_sdk_client_pointed_at_a_provider_is_rejected() -> None:
     """The hole an isinstance check left open: a duck-typed client is not an
     `openai.OpenAI`, so it used to skip validation and could reach a provider
