@@ -3,6 +3,8 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import Login from "./routes/Login";
+import ManualEntryAccountBalance from "./routes/ManualEntryAccountBalance";
+import ManualEntryPortfolio from "./routes/ManualEntryPortfolio";
 import ParseConfirm from "./routes/ParseConfirm";
 
 // Post-auth screens (profile/onboarding, rooms, dashboards) land per their
@@ -40,6 +42,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/staged/:jobId" element={<ParseConfirm />} />
+      <Route path="/manual-entry/portfolio" element={<ManualEntryPortfolio />} />
+      <Route path="/manual-entry/account-balance" element={<ManualEntryAccountBalance />} />
       <Route path="*" element={<AuthenticatedShell />} />
     </Routes>
   );
