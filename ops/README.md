@@ -17,6 +17,7 @@ it running without supervision; you review PRs at your own pace.
 | `install_sweeper.sh` | installs/removes the hourly review agent |
 | `remediate_prs.sh` | answers CodeRabbit's **PR comments** on open PRs, bottom-up, in place |
 | `pr_gate.sh` | publishes the CLI gate's findings→fix trail to the PR and sets the `coderabbit/cli-gate` status |
+| `deferred_findings.tsv` | findings triaged out of a PR into their own issue — the only way a gate goes green with a finding outstanding |
 
 State (all gitignored, all local): `.completed_issues` · `.review_debt.tsv` ·
 `.agent_contracts.md` · `.issue_map.tsv` · `queue.tsv` · `.env.local` · `logs/`
@@ -132,6 +133,28 @@ it still works while the spend limit is hit.
 Status is `success` only when the final round returned zero blocking findings
 (`critical|major|blocker|high`). Never reviewed, or blocking findings still open →
 `failure`.
+
+### Deferring a finding instead of fixing it
+
+A finding can outlast its usefulness: AA-16 went five review rounds, each surfacing
+new material, while gating four PRs and everything stacked above them. When the cost
+of another round exceeds the cost of the gap, triage the finding into its own Linear
+issue and record it in `ops/deferred_findings.tsv`:
+
+```
+issue<TAB>round<TAB>file<TAB>linear<TAB>rationale
+KCH-51	5	.github/workflows/llm-evals.yml	KCH-71	Path filter omits ...
+```
+
+`pr_gate.sh` then subtracts it from that round's blocking count, so one tracked
+finding cannot hold a PR hostage forever. It is **not** hidden: the PR comment lists
+every deferral with its issue, the closing line says the review returned findings
+rather than claiming it came back clean, and the commit status reads
+`N finding(s) deferred to a tracked issue`.
+
+The file is tracked, not gitignored — a deferral is a decision on the record. It needs
+a real Linear id and a reason someone can argue with. Do not use it to clear a finding
+you simply do not want to fix.
 
 ### Run the sweeper after every build, before the next one
 

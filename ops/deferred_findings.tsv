@@ -1,0 +1,10 @@
+# CodeRabbit findings deliberately deferred out of a PR into their own issue.
+#
+# ops/pr_gate.sh reads this to keep a PR's gate from being held hostage by a
+# finding that has been triaged and tracked elsewhere. It does NOT hide them:
+# every deferral is listed in the PR comment with its issue, and the commit
+# status says how many were deferred. An entry is a decision on the record —
+# it needs a real Linear id and a reason someone can argue with.
+#
+# issue<TAB>round<TAB>file<TAB>linear<TAB>rationale
+KCH-51	5	.github/workflows/llm-evals.yml	KCH-71	Path filter omits pyproject.toml/uv.lock, so a dependency-only PR does not schedule the eval. Latent until GROQ_API_KEY is live; failure mode is a missed trigger, not a wrong result. Deferred to end a five-round loop that was gating PRs #16-#19 and everything stacked above them.
