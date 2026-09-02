@@ -82,6 +82,28 @@ async def test_refresh_prices_uses_the_fx_symbol_not_the_raw_currency_code():
     assert fetcher.calls[-1] == ["USDCAD=X", "BTC-CAD"]
 
 
+async def test_refresh_prices_maps_a_crypto_ticker_to_its_cad_pair_once():
+    # worker.adapters.kraken stages a crypto holding's asset code as both
+    # ticker and currency, so BTC shows up in both lists here — the refresh
+    # must fetch/write BTC-CAD exactly once, counted as a price, not an FX
+    # rate, rather than also requesting an unpriceable raw "BTC" ticker.
+    conn = FakeConnection(tickers=["AAPL", "BTC"], currencies=["USD", "BTC"])
+    fetcher = FakeFetcher(
+        {
+            "AAPL": PriceQuote(close=Decimal("220.50"), as_of=TODAY),
+            "BTC-CAD": PriceQuote(close=Decimal("90000"), as_of=TODAY),
+            "USDCAD=X": PriceQuote(close=Decimal("1.35"), as_of=TODAY),
+        }
+    )
+
+    result = await refresh_prices(conn, fetcher=fetcher, now=datetime.now(UTC))
+
+    assert result.prices_written == 2
+    assert result.fx_written == 1
+    assert fetcher.calls == [["AAPL", "BTC-CAD"], ["USDCAD=X"]]
+    assert conn.upserts.count(("BTC-CAD", TODAY, Decimal("90000"), "fake")) == 1
+
+
 async def test_refresh_prices_skips_symbols_the_fetcher_could_not_price():
     conn = FakeConnection(tickers=["AAPL", "BADTICKER"], currencies=[])
     fetcher = FakeFetcher({"AAPL": PriceQuote(close=Decimal("220.50"), as_of=TODAY)})

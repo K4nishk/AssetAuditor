@@ -42,6 +42,22 @@ def fx_symbol_for_currency(currency: str) -> str:
     return f"{normalized}CAD=X"
 
 
+def price_symbol_for_ticker(ticker: str) -> str:
+    """The yfinance symbol used to price a `holdings.ticker` value.
+
+    `worker.adapters.kraken` stages a crypto holding's asset code as both
+    `ticker` and `currency` (e.g. `ticker="BTC"`, `currency="BTC"`) — yfinance
+    can't price the raw code standalone, so this routes it through the same
+    crypto-to-CAD-pair convention `fx_symbol_for_currency` uses, giving
+    `worker.prices.refresh_prices` one canonical `BTC-CAD` symbol instead of
+    a separate, unpriceable `BTC` ticker. Equity/ETF tickers are unaffected.
+    """
+    normalized = ticker.strip().upper()
+    if normalized in CRYPTO_CURRENCIES:
+        return f"{normalized}-CAD"
+    return ticker
+
+
 def convert_to_cad(amount: Decimal, *, currency: str, fx_rate: Decimal | None) -> Decimal:
     """Convert `amount` (in `currency`) to CAD using `fx_rate` (units of CAD
     per one unit of `currency`, i.e. `public.prices.close` for
@@ -67,4 +83,5 @@ __all__ = [
     "MissingFxRateError",
     "convert_to_cad",
     "fx_symbol_for_currency",
+    "price_symbol_for_ticker",
 ]

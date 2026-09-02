@@ -11,6 +11,7 @@ from app.domain.prices import (
     MissingFxRateError,
     convert_to_cad,
     fx_symbol_for_currency,
+    price_symbol_for_ticker,
 )
 
 
@@ -48,3 +49,17 @@ def test_convert_to_cad_normalizes_currency_case():
 def test_convert_to_cad_raises_without_a_rate_for_a_non_cad_currency():
     with pytest.raises(MissingFxRateError):
         convert_to_cad(Decimal("100"), currency="USD", fx_rate=None)
+
+
+def test_price_symbol_for_crypto_ticker_uses_the_canonical_cad_pair():
+    assert price_symbol_for_ticker("BTC") == "BTC-CAD"
+    assert price_symbol_for_ticker("ETH") == "ETH-CAD"
+
+
+def test_price_symbol_for_crypto_ticker_normalizes_case_and_whitespace():
+    assert price_symbol_for_ticker(" btc ") == "BTC-CAD"
+
+
+def test_price_symbol_for_equity_ticker_is_unchanged():
+    assert price_symbol_for_ticker("AAPL") == "AAPL"
+    assert price_symbol_for_ticker("VFV.TO") == "VFV.TO"

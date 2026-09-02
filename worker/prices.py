@@ -53,7 +53,7 @@ from typing import NamedTuple, Protocol
 import asyncpg
 
 from app.db.queries import prices as prices_queries
-from app.domain.prices import fx_symbol_for_currency
+from app.domain.prices import fx_symbol_for_currency, price_symbol_for_ticker
 from worker import metrics
 
 logger = logging.getLogger("worker.prices")
@@ -109,7 +109,7 @@ class YFinancePriceFetcher:
             if history.empty:
                 logger.warning("price refresh: no session data for %s", symbol)
                 continue
-            close = Decimal(str(round(float(history["Close"].iloc[-1]), 6)))
+            close = Decimal(str(history["Close"].iloc[-1]))
             as_of = history.index[-1].date()
             quotes[symbol] = PriceQuote(close=close, as_of=as_of)
         return quotes
@@ -149,18 +149,30 @@ async def refresh_prices(
 
     tickers = await tickers_needed(conn)
     currencies = await currencies_needed(conn)
-    fx_symbols = [fx_symbol_for_currency(currency) for currency in currencies]
 
-    quotes = fetcher.fetch(tickers) if tickers else {}
+    # A crypto holding (`worker.adapters.kraken`) stages its asset code as
+    # both `ticker` and `currency`, e.g. `ticker="BTC"`, `currency="BTC"` —
+    # map the ticker to its canonical `BTC-CAD` pair here, and drop that same
+    # symbol from the FX side below, so the refresh fetches/writes one
+    # `BTC-CAD` row instead of a separate, unpriceable raw `BTC` ticker.
+    ticker_symbols = {ticker: price_symbol_for_ticker(ticker) for ticker in tickers}
+    covered_by_tickers = set(ticker_symbols.values())
+    fx_symbols = [
+        symbol
+        for symbol in (fx_symbol_for_currency(currency) for currency in currencies)
+        if symbol not in covered_by_tickers
+    ]
+
+    quotes = fetcher.fetch(list(ticker_symbols.values())) if ticker_symbols else {}
     fx_quotes = fetcher.fetch(fx_symbols) if fx_symbols else {}
 
     prices_written = 0
-    for ticker in tickers:
-        quote = quotes.get(ticker)
+    for symbol in ticker_symbols.values():
+        quote = quotes.get(symbol)
         if quote is None:
             continue
         await prices_queries.upsert_price(
-            conn, ticker=ticker, price_date=quote.as_of, close=quote.close, source=fetcher.SOURCE
+            conn, ticker=symbol, price_date=quote.as_of, close=quote.close, source=fetcher.SOURCE
         )
         prices_written += 1
 
@@ -174,7 +186,7 @@ async def refresh_prices(
         )
         fx_written += 1
 
-    symbols_failed = [symbol for symbol in tickers if symbol not in quotes] + [
+    symbols_failed = [symbol for symbol in ticker_symbols.values() if symbol not in quotes] + [
         symbol for symbol in fx_symbols if symbol not in fx_quotes
     ]
     if symbols_failed:
