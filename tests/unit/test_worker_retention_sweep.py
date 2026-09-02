@@ -227,8 +227,18 @@ async def test_sweep_job_logs_scrubs_terminal_jobs_past_the_4_day_ttl():
 
     assert scrubbed == 2
     assert JOB_LOG_RETENTION == timedelta(days=4)
+    # the scrub is an `update ... returning id`, so it rides `fetch`, not
+    # `execute` — the returned ids are what the count comes from.
+    assert conn.execute_calls == []
     query, args = conn.fetch_calls[0]
     assert args == (_NOW - JOB_LOG_RETENTION,)
+    # it must null out `error` only, on terminal jobs only: dropping the status
+    # filter would scrub live jobs, and widening the SET would delete the job
+    # metadata that staged_rows/lineage_events hang off (see module docstring).
+    assert "update public.etl_jobs" in query
+    assert "set error = null" in query
+    assert "status in ('done', 'failed')" in query
+    assert "delete" not in query.lower()
 
 
 async def test_sweep_job_logs_returns_zero_when_nothing_is_due():
