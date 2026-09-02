@@ -63,36 +63,42 @@ async def rebuild_gold(
     """
     await lineage.start("gold_rebuild")
     try:
-        silver = await gold_queries.fetch_silver_for_valuation(conn, user_id=user_id)
-        assets = gold_queries.holding_valuations(silver) + gold_queries.cash_balances_by_account(
-            silver.cash_transactions
-        )
-        totals = compute_gold_totals(assets, silver.liabilities)
+        async with conn.transaction():
+            silver = await gold_queries.fetch_silver_for_valuation(conn, user_id=user_id)
+            assets = gold_queries.holding_valuations(
+                silver
+            ) + gold_queries.cash_balances_by_account(silver.cash_transactions)
+            totals = compute_gold_totals(assets, silver.liabilities)
 
-        await gold_queries.write_gold_snapshot(
-            conn,
-            user_id=user_id,
-            snapshot_date=snapshot_date,
-            run_id=lineage.run_id,
-            total_assets_cad=totals.total_assets_cad,
-            total_liabilities_cad=totals.total_liabilities_cad,
-            net_worth_cad=totals.net_worth_cad,
-            term_buckets=totals.term_buckets,
-            diversification_cuts=totals.diversification_cuts,
-        )
+            await gold_queries.write_gold_snapshot(
+                conn,
+                user_id=user_id,
+                snapshot_date=snapshot_date,
+                run_id=lineage.run_id,
+                total_assets_cad=totals.total_assets_cad,
+                total_liabilities_cad=totals.total_liabilities_cad,
+                net_worth_cad=totals.net_worth_cad,
+                term_buckets=totals.term_buckets,
+                diversification_cuts=totals.diversification_cuts,
+            )
 
-        contribution_txns = await gold_queries.fetch_contribution_transactions(
-            conn, user_id=user_id
-        )
-        derived_events = derive_contribution_room_events(contribution_txns)
-        room_events_written = await gold_queries.replace_derived_room_events(
-            conn, user_id=user_id, events=derived_events
-        )
+            contribution_txns = await gold_queries.fetch_contribution_transactions(
+                conn, user_id=user_id
+            )
+            derived_events = derive_contribution_room_events(contribution_txns)
+            room_events_written = await gold_queries.replace_derived_room_events(
+                conn, user_id=user_id, events=derived_events
+            )
+
+            entity_rows = (
+                await gold_queries.fetch_silver_entity_rows(conn, user_id=user_id)
+                if blob is not None
+                else None
+            )
 
         silver_paths: dict[str, str] | None = None
         gold_csv_paths: dict[str, str] | None = None
-        if blob is not None:
-            entity_rows = await gold_queries.fetch_silver_entity_rows(conn, user_id=user_id)
+        if blob is not None and entity_rows is not None:
             silver_paths = write_silver_parquet(entity_rows, blob=blob, user_id=user_id)
             gold_csv_paths = write_gold_csv(
                 totals, blob=blob, user_id=user_id, snapshot_date=snapshot_date

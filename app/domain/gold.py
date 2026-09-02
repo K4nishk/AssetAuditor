@@ -84,7 +84,10 @@ def value_holding(
         for lot in lots
         if lot.vested is not False and lot.unit_cost is not None
     ]
-    if countable:
+    if lots:
+        # Lots are the record once they exist: a holding whose lots are all
+        # unvested (or all missing unit_cost) is worth zero here, it must not
+        # fall back to the full-quantity avg_cost figure.
         return sum((qty * unit_cost for qty, unit_cost in countable), ZERO)
     if avg_cost is None:
         return ZERO

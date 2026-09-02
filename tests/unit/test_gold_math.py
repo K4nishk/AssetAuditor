@@ -44,6 +44,15 @@ def test_value_holding_excludes_unvested_esop_lots() -> None:
     assert value_holding(Decimal("75"), Decimal("38"), lots) == Decimal("1710")
 
 
+def test_value_holding_zero_when_all_lots_unvested() -> None:
+    lots = [
+        LotForValuation(quantity=Decimal("30"), unit_cost=Decimal("38"), vested=False),
+    ]
+    # lots exist, so the entirely-unvested holding must not fall back to
+    # quantity * avg_cost (that would resurrect the unvested value).
+    assert value_holding(Decimal("30"), Decimal("38"), lots) == Decimal("0")
+
+
 def test_value_holding_drops_lots_missing_unit_cost() -> None:
     lots = [
         LotForValuation(quantity=Decimal("10"), unit_cost=Decimal("5"), vested=None),
