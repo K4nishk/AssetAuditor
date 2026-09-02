@@ -1,7 +1,9 @@
 import { Button, Center, Heading, Spinner, Text, VStack } from "@chakra-ui/react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import Login from "./routes/Login";
+import ParseConfirm from "./routes/ParseConfirm";
 
 // Post-auth screens (profile/onboarding, rooms, dashboards) land per their
 // own issues (mvp.md M1-M3); this is a placeholder shell until AA-7 replaces
@@ -31,13 +33,24 @@ function AppRoutes() {
     );
   }
 
-  return session ? <AuthenticatedShell /> : <Login />;
+  if (!session) {
+    return <Login />;
+  }
+
+  return (
+    <Routes>
+      <Route path="/staged/:jobId" element={<ParseConfirm />} />
+      <Route path="*" element={<AuthenticatedShell />} />
+    </Routes>
+  );
 }
 
 export default function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
     </AuthProvider>
   );
 }
