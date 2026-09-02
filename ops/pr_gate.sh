@@ -26,7 +26,10 @@
 set -uo pipefail
 
 OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$OPS_DIR/.." && pwd)"
+# orchestrator.sh re-execs from a copy in $TMPDIR and calls "$OPS_DIR/pr_gate.sh", so
+# OPS_DIR may be that copy. It exports REPO_DIR and AA_REAL_OPS for exactly this —
+# deriving either from OPS_DIR lands in $TMPDIR, where there is no git repo and no logs.
+REPO_DIR="${REPO_DIR:-$(cd "${AA_REAL_OPS:-$OPS_DIR}/.." && pwd)}"
 LOG_DIR="${AA_REAL_OPS:-$OPS_DIR}/logs"
 CR_BLOCKING="${CR_BLOCKING:-critical|major|blocker|high}"
 MARKER="<!-- aa-cli-gate -->"
@@ -135,6 +138,7 @@ command -v gh >/dev/null || { echo "FATAL: gh not installed."; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "FATAL: gh not authenticated (gh auth login)."; exit 1; }
 NWO=$(gh repo view --json nameWithOwner -q .nameWithOwner) || exit 1
 
+rc=0
 prs=$(gh pr list --state open --json number -q '.[].number')
 [ -n "$ONLY_PR" ] && prs="$ONLY_PR"
 [ -z "$prs" ] && { echo "No open PRs."; exit 0; }
@@ -164,8 +168,15 @@ for pr in $prs; do
       && echo "PR #$pr: comment posted"
   fi
 
-  gh api -X POST "repos/$NWO/statuses/$sha" \
-    -f state="$GATE_STATE" -f context="coderabbit/cli-gate" \
-    -f description="$(echo "$GATE_DESC" | cut -c1-138)" >/dev/null \
-    && echo "PR #$pr: status $GATE_STATE — $GATE_DESC"
+  if err=$(gh api -X POST "repos/$NWO/statuses/$sha" \
+             -f state="$GATE_STATE" -f context="coderabbit/cli-gate" \
+             -f description="$(echo "$GATE_DESC" | cut -c1-138)" 2>&1 >/dev/null); then
+    echo "PR #$pr: status $GATE_STATE — $GATE_DESC"
+  else
+    # Setting a commit status needs a token with repo:status. Say so rather than
+    # failing mutely — this is the step that makes the gate a gate.
+    echo "PR #$pr: FAILED to set status — $(echo "$err" | head -2 | tr '\n' ' ')" >&2
+    rc=1
+  fi
 done
+exit $rc
