@@ -70,3 +70,6 @@
 # Tier 9 — showcase.
 9	AA-32	yes
 9	AA-31	yes
+
+# Tier 10 — final gate. Runs after everything else has merged.
+10	AA-36	no

@@ -60,6 +60,7 @@ Issue IDs are stable (`AA-n`) so tmux build sessions can reference them.
 ## M5 — Showcase
 - **AA-31 MDX blog page in-app + repo wiki polish** — architecture story with the mermaid diagrams; screenshots from mock-user data only. deps: M3.
 - **AA-32 Demo mode** — seed-from-fixtures button so the blog demo never touches real data. deps: AA-18.
+- **AA-36 Final CodeRabbit findings sweep before MVP ship** — every finding raised across the build is fixed or consciously accepted in `ops/deferred_findings.tsv`; 8 non-blocking findings are outstanding today because the CLI gate only ever blocked on critical/major. Also confirms no PR's verdict rests on an aborted review, and closes the fix-commit trail gap on AA-20. Runs last. deps: all feature issues merged.
 
 ### Dependency spine (critical path)
 AA-1 → AA-2/3/4 → AA-6 → AA-11 → AA-12/13 → AA-15 → AA-17 → AA-18 → AA-22 → AA-23. Parallel tracks: AA-8 (rooms engine) and AA-14 (CSV adapters) can start early; AA-34 (heartbeat UX) right after AA-11; AA-27 anytime after M2. AA-33 (vLLM promotion) is gated on the GPU box arriving, not on other issues — everything works Groq-only until then.
