@@ -30,17 +30,21 @@ jobs:
       - uses: actions/checkout@v4
 
       # A required check that goes green without running is worse than no check:
-      # it reports "evals passed" on a PR nothing was evaluated on. Missing
-      # secrets therefore fail the job. Provisioning Groq is a manual owner step
-      # (CLAUDE.md zero-cost contract), so until it is done this job is red on
-      # PRs touching the paths above — which is the honest signal.
-      - name: Check Groq/LiteLLM secrets
+      # it reports "evals passed" on a PR nothing was evaluated on, so a missing
+      # credential fails the job instead of skipping it.
+      #
+      # Only GROQ_API_KEY qualifies. It belongs to a Groq account someone has to
+      # create (CLAUDE.md zero-cost contract: no cloud credentials exist in the
+      # agent sandbox), so until it is set this job is red on PRs touching the
+      # paths above — the honest signal. LITELLM_MASTER_KEY is NOT a vendor
+      # credential: it is the password to our own router, so CI mints one per run
+      # rather than blocking on a value the repo can generate for itself.
+      - name: Check Groq secret
         id: check
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
         run: |
-          if [ -n "$GROQ_API_KEY" ] && [ -n "$LITELLM_MASTER_KEY" ]; then
+          if [ -n "$GROQ_API_KEY" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
@@ -49,8 +53,21 @@ jobs:
       - name: Fail when the eval cannot run
         if: steps.check.outputs.configured != 'true'
         run: |
-          echo "::error::GROQ_API_KEY / LITELLM_MASTER_KEY are not set, so the golden-set eval did not run. Add them under Settings -> Secrets and variables -> Actions. Note ops/.env.local is read only by the local orchestrator and never reaches CI."
+          echo "::error::GROQ_API_KEY is not set, so the golden-set eval did not run. Add it under Settings -> Secrets and variables -> Actions. Note ops/.env.local is read only by the local orchestrator and never reaches CI."
           exit 1
+
+      # The router in CI is ephemeral and reachable only inside this runner, so a
+      # per-run key is strictly better than a long-lived shared one. A repo secret
+      # still wins if you set it, for parity with the worker box.
+      - name: Resolve the router key
+        if: steps.check.outputs.configured == 'true'
+        env:
+          CONFIGURED_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+        run: |
+          KEY="$CONFIGURED_KEY"
+          [ -n "$KEY" ] || KEY="sk-ci-$(openssl rand -hex 24)"
+          echo "::add-mask::$KEY"
+          echo "LITELLM_MASTER_KEY=$KEY" >> "$GITHUB_ENV"
 
       - name: Install uv
         if: steps.check.outputs.configured == 'true'
@@ -69,7 +86,6 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
         run: |
           docker run -d --name litellm \
             -p 4000:4000 \
@@ -93,7 +109,8 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         env:
           LITELLM_BASE_URL: http://localhost:4000
-          LITELLM_API_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          # Same value the router was started with — a mismatch is a 401, not a skip.
+          LITELLM_API_KEY: ${{ env.LITELLM_MASTER_KEY }}
         run: uv run pytest tests/evals/ -v -m llm_eval
 
       - name: Stop LiteLLM router

@@ -16,6 +16,10 @@ services:
       WORKER_DATABASE_URL: ${WORKER_DATABASE_URL}
       BLOB_READ_WRITE_TOKEN: ${BLOB_READ_WRITE_TOKEN}
       LITELLM_BASE_URL: http://litellm:4000
+      # The router authenticates its callers, and the worker is one. Without this
+      # the tier falls back to its "sk-litellm-placeholder" default and the router
+      # rejects every extraction with a 401 the moment a master key is set.
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
       WORKER_METRICS_PORT: "9100"
     expose:
       - "9100"
