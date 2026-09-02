@@ -48,14 +48,6 @@ grant usage on schema public to authenticated;
 pytestmark = pytest.mark.asyncio
 
 
-async def _maintenance_conn(pg_cluster):
-    return await asyncpg.connect(
-        host=pg_cluster["socket_dir"],
-        user=pg_cluster["admin_user"],
-        database="postgres",
-    )
-
-
 async def _admin_conn(pg_cluster, dbname):
     return await asyncpg.connect(
         host=pg_cluster["socket_dir"],
@@ -73,18 +65,12 @@ async def _authenticated_conn(pg_cluster, dbname):
 
 
 @pytest_asyncio.fixture
-async def seeded_db(pg_cluster):
+async def seeded_db(pg_cluster, scratch_database):
     # Each test gets its own database — `authenticated` is a role (cluster-scoped,
     # created once in the pg_cluster fixture) but schemas/tables aren't, so reusing
     # one database across tests would leak state (and re-running AUTH_STUB_SQL's
     # `create schema auth` would fail outright on the second test).
-    dbname = f"aa_test_{uuid.uuid4().hex}"
-    maint = await _maintenance_conn(pg_cluster)
-    try:
-        await maint.execute(f'create database "{dbname}"')
-    finally:
-        await maint.close()
-
+    dbname = scratch_database
     admin = await _admin_conn(pg_cluster, dbname)
     try:
         await admin.execute(AUTH_STUB_SQL)
@@ -134,11 +120,6 @@ async def seeded_db(pg_cluster):
         }
     finally:
         await admin.close()
-        maint = await _maintenance_conn(pg_cluster)
-        try:
-            await maint.execute(f'drop database "{dbname}"')
-        finally:
-            await maint.close()
 
 
 async def test_user_sees_only_their_own_account(pg_cluster, seeded_db):

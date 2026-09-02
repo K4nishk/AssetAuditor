@@ -1,1 +1,47 @@
-# Home-lab GPU box compose stack (worker · litellm · vllm --profile gpu · alloy) — implemented in AA-4.
+# Home-lab GPU box compose stack (ADR v1.1.0 §2) — worker · litellm · vllm
+# (--profile gpu, promoted in AA-33). Outbound-only: nothing here publishes a
+# port to the internet; the worker polls Supabase, it is never polled.
+# Bring-up steps: worker/bring-up.md. Grafana Alloy (scrapes worker/litellm/
+# vllm `/metrics`, ADR v1.1.0 §2) is added by AA-27 once those endpoints exist.
+
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL}
+      BLOB_READ_WRITE_TOKEN: ${BLOB_READ_WRITE_TOKEN}
+      LITELLM_BASE_URL: http://litellm:4000
+    depends_on:
+      - litellm
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    # localhost-only listener (ADR v1.1.0 §2) — no `ports:` mapping, so it is
+    # reachable from `worker` on the compose network but never from the host's
+    # public interface.
+    expose:
+      - "4000"
+    volumes:
+      - ../llm/litellm.config.yaml:/app/config.yaml:ro
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    profiles: ["gpu"]
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
