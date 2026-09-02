@@ -114,8 +114,8 @@ function RoomCard({ accountType, breakdown }: { accountType: AccountType; breakd
                     <Td fontSize="xs" color="gray.500">
                       {entry.note}
                       {entry.source_ref && (
-                        <Text as="span" ml={1}>
-                          (source: {entry.source_ref.slice(0, 8)})
+                        <Text as="span" ml={1} title={entry.source_ref}>
+                          (source: {entry.source_ref})
                         </Text>
                       )}
                     </Td>

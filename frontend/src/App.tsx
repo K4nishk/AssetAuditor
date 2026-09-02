@@ -1,6 +1,6 @@
 import { Button, Center, Heading, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useCallback, useEffect, useState } from "react";
-import { BrowserRouter, Link as RouterLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ApiError } from "./lib/api";
@@ -109,6 +109,46 @@ function Home() {
   return <AuthenticatedShell profile={profile} onEditProfile={() => setEditing(true)} />;
 }
 
+// Gates direct navigation to /rooms on the same `shows_room_widgets`
+// eligibility check Home uses to decide whether to show the link at all
+// (non-Canadian profiles have no contribution rooms to compute) — otherwise
+// typing the URL bypasses the check entirely.
+function RoomsRoute() {
+  const [profile, setProfile] = useState<ProfileOut | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getProfile()
+      .then((loaded) => {
+        if (!cancelled) setProfile(loaded);
+      })
+      .catch(() => {
+        if (!cancelled) setProfile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <Center h="100vh">
+        <Spinner />
+      </Center>
+    );
+  }
+
+  if (!profile?.shows_room_widgets) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <Rooms />;
+}
+
 function AppRoutes() {
   const { session, loading } = useAuth();
 
@@ -129,7 +169,7 @@ function AppRoutes() {
       <Route path="/staged/:jobId" element={<ParseConfirm />} />
       <Route path="/manual-entry/portfolio" element={<ManualEntryPortfolio />} />
       <Route path="/manual-entry/account-balance" element={<ManualEntryAccountBalance />} />
-      <Route path="/rooms" element={<Rooms />} />
+      <Route path="/rooms" element={<RoomsRoute />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );
