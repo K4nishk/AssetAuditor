@@ -1,6 +1,6 @@
 import { Button, Center, Heading, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useCallback, useEffect, useState } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ApiError } from "./lib/api";
@@ -10,10 +10,11 @@ import ManualEntryAccountBalance from "./routes/ManualEntryAccountBalance";
 import ManualEntryPortfolio from "./routes/ManualEntryPortfolio";
 import Onboarding from "./routes/Onboarding";
 import ParseConfirm from "./routes/ParseConfirm";
+import Rooms from "./routes/Rooms";
 
-// Post-auth dashboard screens (rooms, net worth, ...) land per their own
-// issues (mvp.md M1-M3); this is a placeholder shell for everything besides
-// the profile itself, which AA-7 owns.
+// Post-auth dashboard screens beyond rooms (net worth, drill-down, ...) land
+// per their own issues (mvp.md M1-M3); this is a placeholder shell for
+// everything besides the profile and rooms screens, which AA-7/AA-9 own.
 function AuthenticatedShell({
   profile,
   onEditProfile,
@@ -28,7 +29,9 @@ function AuthenticatedShell({
       <Heading size="md">AssetAuditor</Heading>
       <Text color="gray.500">Signed in as {session?.user.email}.</Text>
       {profile.shows_room_widgets ? (
-        <Text color="gray.500">Contribution-room widgets land in AA-9.</Text>
+        <Button as={RouterLink} to="/rooms" size="sm" colorScheme="teal" variant="outline">
+          Contribution rooms
+        </Button>
       ) : (
         <Text color="gray.500">
           Contribution-room tracking is Canada-only — hidden for {profile.holdings_country}.
@@ -106,6 +109,46 @@ function Home() {
   return <AuthenticatedShell profile={profile} onEditProfile={() => setEditing(true)} />;
 }
 
+// Gates direct navigation to /rooms on the same `shows_room_widgets`
+// eligibility check Home uses to decide whether to show the link at all
+// (non-Canadian profiles have no contribution rooms to compute) — otherwise
+// typing the URL bypasses the check entirely.
+function RoomsRoute() {
+  const [profile, setProfile] = useState<ProfileOut | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getProfile()
+      .then((loaded) => {
+        if (!cancelled) setProfile(loaded);
+      })
+      .catch(() => {
+        if (!cancelled) setProfile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <Center h="100vh">
+        <Spinner />
+      </Center>
+    );
+  }
+
+  if (!profile?.shows_room_widgets) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <Rooms />;
+}
+
 function AppRoutes() {
   const { session, loading } = useAuth();
 
@@ -126,6 +169,7 @@ function AppRoutes() {
       <Route path="/staged/:jobId" element={<ParseConfirm />} />
       <Route path="/manual-entry/portfolio" element={<ManualEntryPortfolio />} />
       <Route path="/manual-entry/account-balance" element={<ManualEntryAccountBalance />} />
+      <Route path="/rooms" element={<RoomsRoute />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );
