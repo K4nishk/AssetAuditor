@@ -93,9 +93,10 @@ async def test_sweep_bronze_files_purges_a_file_past_the_retention_ttl():
     conn = FakeConnection(bronze_rows=[_bronze_row()])
     blob = FakeBlob()
 
-    purged = await sweep_bronze_files(conn, blob=blob, now=_NOW)
+    result = await sweep_bronze_files(conn, blob=blob, now=_NOW)
 
-    assert purged == 1
+    assert result.purged == 1
+    assert result.failed == 0
     assert blob.deleted == ["https://blob.example/bronze/user-1/aaa"]
     # purged_at marked, blob_url tombstoned
     assert conn.execute_calls[0][1] == ("bronze-1", _NOW)
@@ -125,9 +126,10 @@ async def test_sweep_bronze_files_leaves_a_row_unpurged_when_blob_delete_fails()
     conn = FakeConnection(bronze_rows=[row])
     blob = FakeBlob(fail_urls=frozenset([row["blob_url"]]))
 
-    purged = await sweep_bronze_files(conn, blob=blob, now=_NOW)
+    result = await sweep_bronze_files(conn, blob=blob, now=_NOW)
 
-    assert purged == 0
+    assert result.purged == 0
+    assert result.failed == 1
     assert conn.execute_calls == []
     assert conn.fetchrow_calls == []
 
@@ -138,9 +140,10 @@ async def test_sweep_bronze_files_continues_past_a_failing_row():
     conn = FakeConnection(bronze_rows=[failing_row, ok_row])
     blob = FakeBlob(fail_urls=frozenset([failing_row["blob_url"]]))
 
-    purged = await sweep_bronze_files(conn, blob=blob, now=_NOW)
+    result = await sweep_bronze_files(conn, blob=blob, now=_NOW)
 
-    assert purged == 1
+    assert result.purged == 1
+    assert result.failed == 1
     assert blob.deleted == [ok_row["blob_url"]]
 
 
@@ -186,6 +189,28 @@ async def test_run_retention_sweep_does_not_record_success_on_failure():
 
     with pytest.raises(RuntimeError):
         await run_retention_sweep(conn, blob=blob, now=_NOW)
+
+    gauge_value = metrics.RETENTION_SWEEPER_LAST_SUCCESS_TIMESTAMP.collect()[0].samples[0].value
+    assert gauge_value == 123.0
+
+
+async def test_run_retention_sweep_does_not_record_success_when_a_blob_delete_fails():
+    metrics.record_sweeper_success(when=123.0)
+
+    ok_row = _bronze_row(id="bronze-ok", blob_url="https://blob.example/ok")
+    failing_row = _bronze_row(id="bronze-fail", blob_url="https://blob.example/fail")
+    conn = FakeConnection(
+        bronze_rows=[failing_row, ok_row], scrub_rows=[{"id": "job-1"}]
+    )
+    blob = FakeBlob(fail_urls=frozenset([failing_row["blob_url"]]))
+
+    result = await run_retention_sweep(conn, blob=blob, now=_NOW)
+
+    # the run still completes and reports what it could purge/scrub...
+    assert result.bronze_purged == 1
+    assert result.job_logs_scrubbed == 1
+    # ...but the failed blob delete must keep the success metric stale, or
+    # AA-19's "sweeper-stale is a privacy incident" alert never fires.
 
     gauge_value = metrics.RETENTION_SWEEPER_LAST_SUCCESS_TIMESTAMP.collect()[0].samples[0].value
     assert gauge_value == 123.0

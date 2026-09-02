@@ -22,9 +22,11 @@ Two sweeps, kept distinct because they touch different data:
   metadata/provenance, not a log, and is kept.
 
 `run_retention_sweep` only records `retention_sweeper_last_success_timestamp`
-once both sweeps finish without raising — mvp.md's AA-19 spec says to
-"treat sweeper-stale as a privacy incident", so a partially-failed run must
-NOT refresh the metric and mask that a full run is overdue.
+once both sweeps finish without raising, AND no individual bronze blob delete
+failed — mvp.md's AA-19 spec says to "treat sweeper-stale as a privacy
+incident", so a partially-failed run (whether it raised outright or just left
+some files unpurged) must NOT refresh the metric and mask that a full run is
+overdue.
 """
 
 from __future__ import annotations
@@ -71,14 +73,27 @@ _SCRUB_JOB_LOGS_SQL = """
 """
 
 
+@dataclass(frozen=True)
+class BronzeSweepResult:
+    purged: int
+    failed: int
+
+
 async def sweep_bronze_files(
     conn: asyncpg.Connection, *, blob: BlobStorage, now: datetime
-) -> int:
-    """Purge `bronze_files` rows past `BRONZE_RETENTION`. Returns count purged."""
+) -> BronzeSweepResult:
+    """Purge `bronze_files` rows past `BRONZE_RETENTION`.
+
+    A row whose blob delete fails is left unpurged and counted in `failed`
+    rather than raised immediately, so the rest of the candidates still get
+    attempted this run; `run_retention_sweep` uses `failed` to decide whether
+    the sweep as a whole may be recorded as successful.
+    """
     cutoff = now - BRONZE_RETENTION
     candidates = await conn.fetch(_SELECT_BRONZE_PURGE_CANDIDATES_SQL, cutoff)
 
     purged = 0
+    failed = 0
     for row in candidates:
         try:
             blob.delete(row["blob_url"])
@@ -88,6 +103,7 @@ async def sweep_bronze_files(
                 "leaving unpurged for the next sweep",
                 row["id"],
             )
+            failed += 1
             continue
 
         facets = {
@@ -103,7 +119,7 @@ async def sweep_bronze_files(
             await emitter.complete("retention_purge", facets=facets)
         purged += 1
 
-    return purged
+    return BronzeSweepResult(purged=purged, failed=failed)
 
 
 async def sweep_job_logs(conn: asyncpg.Connection, *, now: datetime) -> int:
@@ -125,11 +141,12 @@ async def run_retention_sweep(
 ) -> RetentionSweepResult:
     """Run both sweeps and, only on full success, record the success metric."""
     swept_at = now if now is not None else datetime.now(UTC)
-    bronze_purged = await sweep_bronze_files(conn, blob=blob, now=swept_at)
+    bronze = await sweep_bronze_files(conn, blob=blob, now=swept_at)
     job_logs_scrubbed = await sweep_job_logs(conn, now=swept_at)
-    metrics.record_sweeper_success(when=swept_at.timestamp())
+    if bronze.failed == 0:
+        metrics.record_sweeper_success(when=swept_at.timestamp())
     return RetentionSweepResult(
-        bronze_purged=bronze_purged,
+        bronze_purged=bronze.purged,
         job_logs_scrubbed=job_logs_scrubbed,
         swept_at=swept_at,
     )
