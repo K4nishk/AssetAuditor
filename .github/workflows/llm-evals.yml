@@ -1,0 +1,118 @@
+name: LLM evals
+
+on:
+  pull_request:
+    paths:
+      # Everything the eval actually exercises. The tier alone was too narrow:
+      # it consumes pdfplumber's text, masks through worker/masking.py, builds
+      # drafts via adapters/base.py and scores against data/samples — a change
+      # to any of those can move the golden-set result without touching
+      # llm_tier.py, and the eval would not have run.
+      - "worker/extract/llm_tier.py"
+      - "worker/extract/pdfplumber_tier.py"
+      - "worker/masking.py"
+      - "worker/adapters/base.py"
+      - "llm/litellm.config.yaml"
+      - "data/samples/**"
+      - "tests/evals/**"
+      - ".github/workflows/llm-evals.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: llm-evals-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golden-set:
+    name: golden-set eval (LiteLLM extractor, Groq)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A required check that goes green without running is worse than no check:
+      # it reports "evals passed" on a PR nothing was evaluated on, so a missing
+      # credential fails the job instead of skipping it.
+      #
+      # Only GROQ_API_KEY qualifies. It belongs to a Groq account someone has to
+      # create (CLAUDE.md zero-cost contract: no cloud credentials exist in the
+      # agent sandbox), so until it is set this job is red on PRs touching the
+      # paths above — the honest signal. LITELLM_MASTER_KEY is NOT a vendor
+      # credential: it is the password to our own router, so CI mints one per run
+      # rather than blocking on a value the repo can generate for itself.
+      - name: Check Groq secret
+        id: check
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -n "$GROQ_API_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail when the eval cannot run
+        if: steps.check.outputs.configured != 'true'
+        run: |
+          echo "::error::GROQ_API_KEY is not set, so the golden-set eval did not run. Add it under Settings -> Secrets and variables -> Actions. Note ops/.env.local is read only by the local orchestrator and never reaches CI."
+          exit 1
+
+      # The router in CI is ephemeral and reachable only inside this runner, so a
+      # per-run key is strictly better than a long-lived shared one. A repo secret
+      # still wins if you set it, for parity with the worker box.
+      - name: Resolve the router key
+        if: steps.check.outputs.configured == 'true'
+        env:
+          CONFIGURED_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+        run: |
+          KEY="$CONFIGURED_KEY"
+          [ -n "$KEY" ] || KEY="sk-ci-$(openssl rand -hex 24)"
+          echo "::add-mask::$KEY"
+          echo "LITELLM_MASTER_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        if: steps.check.outputs.configured == 'true'
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync dependencies
+        if: steps.check.outputs.configured == 'true'
+        run: uv sync --frozen
+
+      # Same Groq-only config the worker box runs (llm/litellm.config.yaml) —
+      # the eval exercises the real routing config, not a stand-in.
+      - name: Start LiteLLM router
+        if: steps.check.outputs.configured == 'true'
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          docker run -d --name litellm \
+            -p 4000:4000 \
+            -v "${{ github.workspace }}/llm/litellm.config.yaml:/app/config.yaml:ro" \
+            -e GROQ_API_KEY \
+            -e LITELLM_MASTER_KEY \
+            ghcr.io/berriai/litellm:main-stable \
+            --config /app/config.yaml --port 4000
+
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:4000/health/liveliness > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::litellm container never became healthy" >&2
+          docker logs litellm
+          exit 1
+
+      - name: Run golden-set eval
+        if: steps.check.outputs.configured == 'true'
+        env:
+          LITELLM_BASE_URL: http://localhost:4000
+          # Same value the router was started with — a mismatch is a 401, not a skip.
+          LITELLM_API_KEY: ${{ env.LITELLM_MASTER_KEY }}
+        run: uv run pytest tests/evals/ -v -m llm_eval
+
+      - name: Stop LiteLLM router
+        if: always() && steps.check.outputs.configured == 'true'
+        run: docker rm -f litellm

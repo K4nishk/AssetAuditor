@@ -62,6 +62,21 @@ ignore_missing_imports = true
 module = ["PIL", "PIL.*"]
 follow_imports = "skip"
 
+# `openai`'s embeddings helpers do a `TYPE_CHECKING`-guarded `import numpy`
+# (worker/extract/llm_tier.py, AA-16, only uses openai's chat-completions
+# surface, never embeddings) — mypy still resolves that import to build
+# openai's own type info and hits numpy's installed stub using the same
+# PEP 695 `type` alias syntax PIL hit above. Skipping `numpy` itself doesn't
+# help (mypy parses an imported module's stub to learn its interface before
+# per-module `follow_imports` suppresses errors in it); skip the openai
+# submodules that reach numpy instead, same as PIL is skipped wholesale above.
+[[tool.mypy.overrides]]
+module = ["openai._extras", "openai._extras.*", "openai.lib._parsing._embeddings"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "llm_eval: golden-set eval against a live LiteLLM endpoint (AA-16) — skipped unless LITELLM_BASE_URL is set; runs in .github/workflows/llm-evals.yml",
+]
