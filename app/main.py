@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from app.routes.manual_entry import router as manual_entry_router
 from app.routes.profile import router as profile_router
+from app.routes.rooms import router as rooms_router
 from app.routes.staged import router as staged_router
 from app.routes.uploads import router as uploads_router
 
@@ -26,6 +27,7 @@ def create_app() -> FastAPI:
     app.include_router(staged_router)
     app.include_router(manual_entry_router)
     app.include_router(profile_router)
+    app.include_router(rooms_router)
 
     return app
 
