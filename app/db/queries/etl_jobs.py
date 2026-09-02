@@ -26,6 +26,25 @@ _GET_STATUS_BY_BRONZE_FILE_SQL = """
     limit 1
 """
 
+_GET_JOB_SQL = """
+    select id, user_id, bronze_file_id, status, claimed_by, claimed_at,
+           error, created_at, updated_at
+    from public.etl_jobs
+    where user_id = $1 and id = $2
+"""
+
+# Only the parse-confirm screen's own transition (AA-17): a job awaiting
+# confirmation moves to 'done' once the user confirms. Every other status
+# change (pending -> claimed -> parsing -> needs_user/failed) is the worker's
+# service_role-scoped `worker.queue.release_job`, not this RLS-scoped one.
+_MARK_DONE_SQL = """
+    update public.etl_jobs
+    set status = 'done'
+    where user_id = $1 and id = $2 and status = 'needs_user'
+    returning id, user_id, bronze_file_id, status, claimed_by, claimed_at,
+              error, created_at, updated_at
+"""
+
 
 async def enqueue_job(
     conn: asyncpg.Connection, *, user_id: str, bronze_file_id: str
@@ -37,3 +56,15 @@ async def get_job_status_for_bronze_file(
     conn: asyncpg.Connection, *, user_id: str, bronze_file_id: str
 ) -> asyncpg.Record | None:
     return await conn.fetchrow(_GET_STATUS_BY_BRONZE_FILE_SQL, user_id, bronze_file_id)
+
+
+async def get_job(conn: asyncpg.Connection, *, user_id: str, job_id: str) -> asyncpg.Record | None:
+    return await conn.fetchrow(_GET_JOB_SQL, user_id, job_id)
+
+
+async def mark_job_done(
+    conn: asyncpg.Connection, *, user_id: str, job_id: str
+) -> asyncpg.Record | None:
+    """Transition `needs_user` -> `done`; `None` if the job doesn't exist,
+    isn't this user's, or isn't currently awaiting confirmation."""
+    return await conn.fetchrow(_MARK_DONE_SQL, user_id, job_id)

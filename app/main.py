@@ -9,6 +9,7 @@ the same `/api/...` convention.
 
 from fastapi import FastAPI
 
+from app.routes.staged import router as staged_router
 from app.routes.uploads import router as uploads_router
 
 
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": "AssetAuditor"}
 
     app.include_router(uploads_router)
+    app.include_router(staged_router)
 
     return app
 
