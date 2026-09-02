@@ -112,6 +112,9 @@ class FakeClient:
         content = json.dumps({"transactions": transactions})
         response = _FakeResponse(choices=[_FakeChoice(_FakeMessage(content))], model=model)
         self.chat = _FakeChat(completions=_FakeCompletions(response=response))
+        # Every injected client is validated by base_url, doubles included —
+        # there is no type-based exemption to hide behind.
+        self.base_url = "http://litellm:4000"
 
     @property
     def last_call(self) -> dict[str, Any]:
@@ -390,3 +393,22 @@ def test_injected_sdk_client_pointed_at_a_provider_is_rejected() -> None:
 def test_injected_sdk_client_pointed_at_the_router_is_accepted() -> None:
     routed = openai.OpenAI(base_url="http://litellm:4000", api_key="sk-test")
     assert _resolve_client(routed) is routed
+
+
+def test_injected_non_sdk_client_pointed_at_a_provider_is_rejected() -> None:
+    """The hole an isinstance check left open: a duck-typed client is not an
+    `openai.OpenAI`, so it used to skip validation and could reach a provider
+    directly — exactly what hard rule #6 forbids."""
+    double = FakeClient(transactions=[])
+    double.base_url = "https://api.groq.com/openai/v1"
+    with pytest.raises(LlmEndpointNotApprovedError):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=double)
+
+
+def test_injected_client_without_a_base_url_is_rejected() -> None:
+    """Fails closed: a client that cannot state its endpoint is refused rather
+    than trusted, so there is no unvalidated request path left."""
+    double = FakeClient(transactions=[])
+    del double.base_url
+    with pytest.raises(LlmEndpointNotApprovedError):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=double)

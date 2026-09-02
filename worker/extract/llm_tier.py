@@ -186,17 +186,28 @@ def _resolve_client(client: openai.OpenAI | None) -> openai.OpenAI:
 
     `_client()` validates `LITELLM_BASE_URL`, but an injected client would
     otherwise carry whatever `base_url` it was constructed with straight past
-    that check — a caller could hand this tier an `openai.OpenAI` pointed at
-    a provider and bypass the router's RPM/TPM caps, which are the zero-cost
-    contract's only enforcement mechanism (CLAUDE.md hard rule #6). So every
-    real SDK client is validated too. The injection seam stays open only for
-    test doubles, which are not `openai.OpenAI` instances and never open a
-    socket (`tests/unit/test_llm_tier.py`'s `FakeClient`).
+    that check — a caller could hand this tier a client pointed at a provider
+    and bypass the router's RPM/TPM caps, which are the zero-cost contract's
+    only enforcement mechanism (CLAUDE.md hard rule #6).
+
+    Gating that check on `isinstance(client, openai.OpenAI)` was not enough:
+    any duck-typed object exposing `.chat.completions.create` is not an SDK
+    instance, so it skipped validation entirely and could open a socket to
+    wherever it liked. The requirement therefore sits on the attribute, not
+    the type — a client that cannot state an approved `base_url` is refused
+    rather than trusted, so no request path reaches a provider unvalidated.
+    Test doubles declare the router's own URL and are checked like anything
+    else (`tests/unit/test_llm_tier.py`'s `FakeClient`).
     """
     if client is None:
         return _client()
-    if isinstance(client, openai.OpenAI):
-        _validate_base_url(str(client.base_url))
+    base_url = getattr(client, "base_url", None)
+    if base_url is None:
+        raise LlmEndpointNotApprovedError(
+            "injected extraction client exposes no base_url to validate; refusing "
+            "to send masked statement text to an unverified endpoint."
+        )
+    _validate_base_url(str(base_url))
     return client
 
 
