@@ -184,3 +184,100 @@ def test_upsert_profile_requires_auth():
     response = client.put("/api/profile", json=_VALID_BODY)
 
     assert response.status_code == 401
+
+
+# --- POST /api/profile/deactivate + /reactivate (KCH-45 / AA-10) ---------
+
+
+class FakeSequenceConnection:
+    """Returns each entry of `responses` in order, one per `fetchrow` call —
+    needed for the deactivate/reactivate routes, whose fallback lookup
+    (`_deactivation_response`) issues a second `fetchrow` only when the first
+    (the guarded update) returns nothing."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls: list[tuple] = []
+
+    async def fetchrow(self, query, *args):
+        self.calls.append((query, args))
+        return self._responses.pop(0)
+
+
+def _override_conn_sequence(responses):
+    fake = FakeSequenceConnection(responses)
+
+    async def _fake_conn():
+        yield fake
+
+    app.dependency_overrides[profile_module._conn] = _fake_conn
+    return fake
+
+
+def test_deactivate_sets_deactivated_at():
+    _override_conn_sequence([{"id": USER_ID, "deactivated_at": datetime.now(UTC)}])
+
+    response = client.post("/api/profile/deactivate")
+
+    assert response.status_code == 200
+    assert response.json()["deactivated_at"] is not None
+
+
+def test_deactivate_is_idempotent_when_already_deactivated():
+    now = datetime.now(UTC)
+    _override_conn_sequence([None, {"id": USER_ID, "deactivated_at": now}])
+
+    response = client.post("/api/profile/deactivate")
+
+    assert response.status_code == 200
+    assert response.json()["deactivated_at"] is not None
+
+
+def test_deactivate_404s_when_no_profile_exists():
+    _override_conn_sequence([None, None])
+
+    response = client.post("/api/profile/deactivate")
+
+    assert response.status_code == 404
+
+
+def test_deactivate_requires_auth():
+    app.dependency_overrides.pop(get_current_user_id, None)
+
+    response = client.post("/api/profile/deactivate")
+
+    assert response.status_code == 401
+
+
+def test_reactivate_clears_deactivated_at():
+    _override_conn_sequence([{"id": USER_ID, "deactivated_at": None}])
+
+    response = client.post("/api/profile/reactivate")
+
+    assert response.status_code == 200
+    assert response.json()["deactivated_at"] is None
+
+
+def test_reactivate_is_idempotent_when_already_active():
+    _override_conn_sequence([None, {"id": USER_ID, "deactivated_at": None}])
+
+    response = client.post("/api/profile/reactivate")
+
+    assert response.status_code == 200
+    assert response.json()["deactivated_at"] is None
+
+
+def test_reactivate_404s_when_no_profile_exists():
+    _override_conn_sequence([None, None])
+
+    response = client.post("/api/profile/reactivate")
+
+    assert response.status_code == 404
+
+
+def test_reactivate_requires_auth():
+    app.dependency_overrides.pop(get_current_user_id, None)
+
+    response = client.post("/api/profile/reactivate")
+
+    assert response.status_code == 401

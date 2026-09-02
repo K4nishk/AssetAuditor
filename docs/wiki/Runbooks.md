@@ -7,4 +7,4 @@
 - ETL job stuck in `needs_user` — triage decision tree.
 - Rebuild gold from silver (`rebuild_gold`) — safe anytime; document expected duration.
 - Rotate Groq/Supabase/Grafana credentials.
-- Account hard-purge verification checklist (mirrors e2e Flow 1.6).
+- Account hard-purge verification checklist (mirrors e2e Flow 1.6) — full checklist in [`Account-Deletion-Checklist.md`](Account-Deletion-Checklist.md).

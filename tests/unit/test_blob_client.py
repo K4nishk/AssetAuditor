@@ -108,3 +108,106 @@ def test_delete_raises_blob_delete_error_on_transport_failure():
 
     with pytest.raises(BlobDeleteError):
         storage.delete("https://blob.example/bronze/u1/abc")
+
+
+def _fake_sequence_transport(response_bodies: list[dict], captured: list):
+    """Same shape as `_fake_transport`, but returns one entry of
+    `response_bodies` per call in order — needed for `delete_prefix`, which
+    makes a `list` GET (possibly several, paginated) followed by a `delete`
+    POST, each expecting a different response body."""
+    remaining = list(response_bodies)
+
+    @contextmanager
+    def transport(request, timeout):
+        captured.append(request)
+        yield _FakeResponse(json.dumps(remaining.pop(0)).encode("utf-8"))
+
+    return transport
+
+
+def test_delete_prefix_lists_then_deletes_every_match():
+    captured = []
+    storage = VercelBlobStorage(
+        token="secret-token",
+        transport=_fake_sequence_transport(
+            [
+                {
+                    "blobs": [
+                        {"url": "https://blob.example/silver/u1/accounts.parquet"},
+                        {"url": "https://blob.example/silver/u1/holdings.parquet"},
+                    ],
+                    "hasMore": False,
+                },
+                {"ok": True},
+            ],
+            captured,
+        ),
+    )
+
+    deleted = storage.delete_prefix("silver/u1/")
+
+    assert deleted == 2
+    assert len(captured) == 2
+    list_request, delete_request = captured
+    assert list_request.full_url == "https://blob.vercel-storage.com/?prefix=silver/u1/"
+    assert delete_request.full_url == "https://blob.vercel-storage.com/delete"
+    assert json.loads(delete_request.data) == {
+        "urls": [
+            "https://blob.example/silver/u1/accounts.parquet",
+            "https://blob.example/silver/u1/holdings.parquet",
+        ]
+    }
+
+
+def test_delete_prefix_paginates_across_a_cursor():
+    captured = []
+    storage = VercelBlobStorage(
+        token="secret-token",
+        transport=_fake_sequence_transport(
+            [
+                {
+                    "blobs": [{"url": "https://blob.example/bronze/u1/a"}],
+                    "hasMore": True,
+                    "cursor": "page-2",
+                },
+                {
+                    "blobs": [{"url": "https://blob.example/bronze/u1/b"}],
+                    "hasMore": False,
+                },
+                {"ok": True},
+            ],
+            captured,
+        ),
+    )
+
+    deleted = storage.delete_prefix("bronze/u1/")
+
+    assert deleted == 2
+    list_request_1, list_request_2, _delete_request = captured
+    assert "cursor" not in list_request_1.full_url
+    assert "cursor=page-2" in list_request_2.full_url
+
+
+def test_delete_prefix_returns_zero_and_skips_delete_when_nothing_matches():
+    captured = []
+    storage = VercelBlobStorage(
+        token="secret-token",
+        transport=_fake_sequence_transport([{"blobs": [], "hasMore": False}], captured),
+    )
+
+    deleted = storage.delete_prefix("gold/u1/")
+
+    assert deleted == 0
+    assert len(captured) == 1  # only the list call, no delete POST
+
+
+def test_delete_prefix_raises_blob_delete_error_on_list_failure():
+    @contextmanager
+    def failing_transport(request, timeout):
+        raise OSError("connection refused")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+    storage = VercelBlobStorage(token="secret-token", transport=failing_transport)
+
+    with pytest.raises(BlobDeleteError):
+        storage.delete_prefix("bronze/u1/")

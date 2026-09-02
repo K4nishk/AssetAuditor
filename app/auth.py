@@ -131,6 +131,23 @@ def decode_supabase_jwt(token: str, cache: JWKSCache, audience: str) -> dict[str
     return claims
 
 
+def get_current_claims(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> dict[str, Any]:
+    """FastAPI dependency: verify the bearer JWT and return its full claim set.
+
+    For routes that need more than `sub` — e.g. AA-10's `DELETE /account`
+    re-auth freshness check on the `iat` claim (`app.domain.account_lifecycle`).
+    Duplicates `get_current_user_id`'s verification rather than composing with
+    it, so that function's settled signature/behavior stays untouched.
+    """
+    if credentials is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+
+    audience = os.environ.get("SUPABASE_JWT_AUD", "authenticated")
+    return decode_supabase_jwt(credentials.credentials, _get_cache(), audience)
+
+
 def get_current_user_id(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> str:

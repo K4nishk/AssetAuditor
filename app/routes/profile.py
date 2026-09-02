@@ -1,22 +1,29 @@
-"""Profile CRUD + onboarding facts (KCH-42 / AA-7).
+"""Profile CRUD + onboarding facts + deactivate/reactivate (KCH-42 / AA-7, KCH-45 / AA-10).
 
 `users_profile` (migration 0001) is a singleton per user — `id = auth.uid()`,
 no separate `user_id` column — so create and update collapse into one
 idempotent `PUT` upsert instead of separate POST/PATCH verbs
-(`app.db.queries.users_profile.upsert_profile`); deactivate/delete is AA-10's
-scope, not this one's. `GET` 404s when no row exists yet, which is exactly
-the "no profile" signal the frontend's onboarding screen (wireframe v1
-screen 1) uses to show the intake form instead of the rest of the app.
+(`app.db.queries.users_profile.upsert_profile`). `GET` 404s when no row
+exists yet, which is exactly the "no profile" signal the frontend's
+onboarding screen (wireframe v1 screen 1) uses to show the intake form
+instead of the rest of the app.
 
 `ProfileOut.shows_room_widgets` (`app.domain.profile.shows_room_widgets`)
 tells the frontend whether to render the TFSA/RRSP/FHSA room widgets — the
 CA-only assumption lives here, once, instead of a country-string comparison
 duplicated in the frontend.
+
+`POST /deactivate` / `POST /reactivate` are AA-10's soft-freeze endpoint —
+just a `users_profile.deactivated_at` toggle, same table/route module as the
+rest of profile. The hard purge (`DELETE /account`) is a separate, heavier
+concern (blobs, auth identity, every other table) and lives in
+`app.routes.account` instead.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -26,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import get_current_user_id
 from app.db.pool import rls_connection
-from app.db.queries import users_profile
+from app.db.queries import account_lifecycle, users_profile
 from app.domain.profile import shows_room_widgets
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
@@ -100,3 +107,38 @@ async def upsert_profile(
     if row is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "profile is deactivated")
     return _to_out(row)
+
+
+class DeactivationOut(BaseModel):
+    deactivated_at: datetime | None = None
+
+
+async def _deactivation_response(
+    row: asyncpg.Record | None, *, conn: asyncpg.Connection, user_id: str
+) -> DeactivationOut:
+    """`row` is the update's `RETURNING` row, or `None` when the guarded
+    update matched nothing — which means either no profile exists (404) or
+    the profile is already in the requested state (idempotent success)."""
+    if row is None:
+        row = await account_lifecycle.get_deactivation_status(conn, user_id=user_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no profile yet")
+    return DeactivationOut(deactivated_at=row["deactivated_at"])
+
+
+@router.post("/deactivate", response_model=DeactivationOut)
+async def deactivate_profile(
+    user_id: str = Depends(get_current_user_id),
+    conn: asyncpg.Connection = Depends(_conn),
+) -> DeactivationOut:
+    row = await account_lifecycle.deactivate_account(conn, user_id=user_id)
+    return await _deactivation_response(row, conn=conn, user_id=user_id)
+
+
+@router.post("/reactivate", response_model=DeactivationOut)
+async def reactivate_profile(
+    user_id: str = Depends(get_current_user_id),
+    conn: asyncpg.Connection = Depends(_conn),
+) -> DeactivationOut:
+    row = await account_lifecycle.reactivate_account(conn, user_id=user_id)
+    return await _deactivation_response(row, conn=conn, user_id=user_id)
