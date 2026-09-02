@@ -80,6 +80,14 @@ create table public.bronze_files (
     period text,
     blob_url text not null,
     purged_at timestamptz,
+    -- Retention sweeper (AA-19) outbox: set together with a `retention_purge`
+    -- START lineage event, in the same transaction, *before* the sweeper ever
+    -- calls Blob delete. That ordering means a crash between the delete call
+    -- succeeding and `purged_at` being set leaves a row that's still
+    -- correctly flagged unpurged and retryable, with its START event already
+    -- on record, rather than a deleted blob with no provenance trail at all.
+    purge_run_id uuid,
+    purge_started_at timestamptz,
     deactivated_at timestamptz,
     created_at timestamptz not null default now(),
     unique (user_id, sha256)

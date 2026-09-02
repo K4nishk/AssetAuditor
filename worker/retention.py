@@ -13,6 +13,11 @@ Two sweeps, kept distinct because they touch different data:
   "purge tombstone" AA-23's drill-down panel falls back to once a source file
   is gone. A file whose blob delete fails is left unpurged so the next
   night's sweep retries it rather than losing the tombstone silently.
+  The START event and a `purge_run_id`/`purge_started_at` outbox marker are
+  persisted *before* Blob delete is ever called, so a DB failure after a
+  successful delete (but before `purged_at` is set) still leaves the row
+  retryable next sweep without losing the record that the delete happened —
+  see `sweep_bronze_files`'s docstring for the two-phase commit shape.
 - `sweep_job_logs` only clears `etl_jobs.error` on terminal (done/failed)
   jobs older than 4 days — it does NOT delete the `etl_jobs` row itself.
   `staged_rows` and `lineage_events` both FK to `etl_jobs` (the former
@@ -41,7 +46,7 @@ import asyncpg
 
 from app.uploads.blob import BlobDeleteError, BlobStorage, get_blob_storage
 from worker import metrics
-from worker.lineage import LineageEmitter
+from worker.lineage import emit_lineage_event, new_run_id
 
 logger = logging.getLogger("worker.retention")
 
@@ -49,17 +54,26 @@ BRONZE_RETENTION = timedelta(days=14)
 JOB_LOG_RETENTION = timedelta(days=4)
 
 _SELECT_BRONZE_PURGE_CANDIDATES_SQL = """
-    select id, user_id, sha256, institution, blob_url
+    select id, user_id, sha256, institution, blob_url, purge_run_id
     from public.bronze_files
     where purged_at is null and created_at < $1
     order by created_at
+"""
+
+# Outbox marker + `retention_purge` run id, persisted before Blob delete is
+# ever called. A row that already carries one (a retry after a prior sweep
+# died between delete and finalize) reuses it instead of re-emitting START.
+_MARK_BRONZE_PURGE_PENDING_SQL = """
+    update public.bronze_files
+    set purge_run_id = $2, purge_started_at = $3
+    where id = $1
 """
 
 # blob_url can't go to null (`not null` in migration 0001) — empty string is
 # the tombstone sentinel for "no bytes behind this row anymore".
 _MARK_BRONZE_PURGED_SQL = """
     update public.bronze_files
-    set purged_at = $2, blob_url = ''
+    set purged_at = $2, blob_url = '', purge_run_id = null, purge_started_at = null
     where id = $1
 """
 
@@ -84,10 +98,28 @@ async def sweep_bronze_files(
 ) -> BronzeSweepResult:
     """Purge `bronze_files` rows past `BRONZE_RETENTION`.
 
-    A row whose blob delete fails is left unpurged and counted in `failed`
-    rather than raised immediately, so the rest of the candidates still get
-    attempted this run; `run_retention_sweep` uses `failed` to decide whether
-    the sweep as a whole may be recorded as successful.
+    Two-phase per row so a crash never leaves a deleted blob with no
+    provenance trail:
+
+    1. Persist a `purge_run_id`/`purge_started_at` outbox marker and emit the
+       `retention_purge` START lineage event, committed *before* Blob delete
+       is called. A row that already has `purge_run_id` set (a retry after a
+       prior sweep died between step 2 and step 3) skips straight to step 2
+       and reuses it rather than emitting a second START.
+    2. Call `blob.delete`. A row whose delete fails is left pending (not
+       purged, marker still set) and counted in `failed` rather than raised
+       immediately, so the rest of the candidates still get attempted this
+       run; `run_retention_sweep` uses `failed` to decide whether the sweep
+       as a whole may be recorded as successful.
+    3. Only once delete succeeds: mark `purged_at`, clear the outbox marker,
+       and emit COMPLETE, all in one transaction.
+
+    If a DB failure lands between step 2 and step 3, the row keeps its
+    `purge_run_id` and stays unpurged, so the next sweep retries the delete
+    (Blob delete-by-url is treated as idempotent — see `app.uploads.blob`'s
+    module docstring on that being unverified against a live store) and then
+    finalizes with the same run id, instead of losing the START event or
+    silently re-purging under a fresh, disconnected run.
     """
     cutoff = now - BRONZE_RETENTION
     candidates = await conn.fetch(_SELECT_BRONZE_PURGE_CANDIDATES_SQL, cutoff)
@@ -95,6 +127,29 @@ async def sweep_bronze_files(
     purged = 0
     failed = 0
     for row in candidates:
+        facets = {
+            "bronze_file_id": str(row["id"]),
+            "sha256": row["sha256"],
+            "institution": row["institution"],
+            "reason": "14_day_retention_ttl",
+        }
+
+        run_id = row["purge_run_id"]
+        if run_id is None:
+            run_id = new_run_id()
+            async with conn.transaction():
+                await conn.execute(_MARK_BRONZE_PURGE_PENDING_SQL, row["id"], run_id, now)
+                await emit_lineage_event(
+                    conn,
+                    user_id=str(row["user_id"]),
+                    run_id=run_id,
+                    step="retention_purge",
+                    event_type="START",
+                    facets=facets,
+                )
+        else:
+            run_id = str(run_id)
+
         try:
             blob.delete(row["blob_url"])
         except BlobDeleteError:
@@ -106,17 +161,16 @@ async def sweep_bronze_files(
             failed += 1
             continue
 
-        facets = {
-            "bronze_file_id": str(row["id"]),
-            "sha256": row["sha256"],
-            "institution": row["institution"],
-            "reason": "14_day_retention_ttl",
-        }
         async with conn.transaction():
             await conn.execute(_MARK_BRONZE_PURGED_SQL, row["id"], now)
-            emitter = LineageEmitter(conn, user_id=str(row["user_id"]))
-            await emitter.start("retention_purge", facets=facets)
-            await emitter.complete("retention_purge", facets=facets)
+            await emit_lineage_event(
+                conn,
+                user_id=str(row["user_id"]),
+                run_id=run_id,
+                step="retention_purge",
+                event_type="COMPLETE",
+                facets=facets,
+            )
         purged += 1
 
     return BronzeSweepResult(purged=purged, failed=failed)
