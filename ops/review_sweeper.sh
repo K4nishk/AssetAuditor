@@ -106,6 +106,15 @@ settle() {
       log "CodeRabbit quota exhausted. Stopping this sweep; $issue stays in the ledger."
       release_worktree; return 2
     fi
+    # An aborted review reports zero findings, which the clean-branch below would
+    # otherwise accept — clearing the debt and telling the PR it passed. That is
+    # exactly how #6 and #7 were marked "settled, clean" on "Connection failed"
+    # errors. Keep the debt and let a later sweep do it properly.
+    if ! cr_completed "$findings"; then
+      log "#$pr: review aborted before completing ($(grep -o '\"message\":\"[^\"]*\"' "$findings" | head -1)) — debt kept, nothing claimed."
+      sweep_report "- ⛔ **#$pr** \`$issue\` — review aborted before completing; debt kept, PR still unreviewed"
+      release_worktree; return 2
+    fi
   fi
 
   local blocking total

@@ -359,6 +359,16 @@ run_agent() {
 # `--agent` output shape is not a stable contract, so parse defensively: whole
 # JSON, then NDJSON, then plain text. A parse failure must never look like
 # "zero findings" — that would let unreviewed code masquerade as clean.
+# A review that aborted emits no findings — same shape as a review that found
+# nothing. Only a run reaching `complete` may be read as clean. cr_is_rate_limited
+# catches one abort cause; this catches all of them (connection drops, crashes).
+# Observed 2026-09-02: sweeps of PR #6 and #7 died on "Connection failed" and were
+# both recorded as "settled, clean", clearing the debt on unreviewed branches.
+cr_completed() {
+  [ -s "$1" ] || return 1
+  [ "$(grep '^{' "$1" 2>/dev/null | jq -sr 'any(.[]; .type=="complete")' 2>/dev/null)" = "true" ]
+}
+
 cr_normalise() {
   local f="$1"
   # `grep '^{'` first: CodeRabbit appends plain-text lines (e.g. "Error: Rate limit
@@ -503,6 +513,16 @@ coderabbit_gate() {
         # we could not read. Either way this is not "clean" — say so on the PR.
         CR_STATUS="advisory"
         CR_SUMMARY="CodeRabbit reported **$total finding(s)**, none classified as blocking (${CR_BLOCKING//|/, })$([ "$round" -gt 0 ] && echo " after $round fix round(s)"). Read them before approving: \`ops/logs/$(basename "$findings")\`"
+      elif ! cr_completed "$findings"; then
+        # Zero findings from a run that never finished is not a clean branch.
+        log "$identifier: round $round reported no findings but never completed — refusing to call it clean."
+        if [ "$saw_findings" -eq 1 ]; then
+          CR_STATUS="unverified"
+          CR_SUMMARY="CodeRabbit reviewed this branch and its blocking findings were fixed, but the confirming re-review **aborted before completing**, so it reported nothing rather than nothing-to-report. The fixes are unconfirmed. Output: \`ops/logs/$(basename "$findings")\`"
+        else
+          CR_STATUS="unavailable"
+          CR_SUMMARY="CodeRabbit's review **aborted before completing** and therefore reported no findings. This branch was **NOT machine-reviewed** — review it by hand. Output: \`ops/logs/$(basename "$findings")\`"
+        fi
       else
         [ "$round" -eq 0 ] && CR_STATUS="clean" || CR_STATUS="resolved"
         CR_SUMMARY="CodeRabbit: reviewed, no findings$([ "$round" -gt 0 ] && echo " after $round fix round(s)")."
