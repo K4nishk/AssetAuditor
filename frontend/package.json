@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "check:analytics-events": "node scripts/check-analytics-schema.mjs",
+    "test:analytics-events": "node --test scripts/check-analytics-schema.test.mjs"
   },
   "dependencies": {
     "@chakra-ui/react": "^2.8.2",

@@ -48,6 +48,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { track } from "../lib/analytics";
 import { ApiError } from "../lib/api";
 import { type CommentaryOut, getCommentary } from "../lib/commentaryApi";
 import {
@@ -591,6 +592,7 @@ export default function Dashboard() {
   }, []);
 
   const openDrillDown = useCallback(async (selector: SliceSelector) => {
+    track("dashboard_drilldown", { chart: selector.kind });
     const requestId = ++drillDownRequestId.current;
     setDrillDownOpen(true);
     setDrillDownLoading(true);

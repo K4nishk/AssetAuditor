@@ -21,6 +21,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
+import { track } from "../lib/analytics";
 import { ApiError } from "../lib/api";
 import {
   type ConfirmResponse,
@@ -120,6 +121,8 @@ export default function ParseConfirm() {
     try {
       const result = await confirmStagedRows(jobId);
       setConfirmResult(result);
+      const corrections = rows.filter((row) => row.method === "manual_correction").length;
+      track("parse_confirmed", { row_count: result.confirmed_row_count, corrections });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "failed to confirm rows");
