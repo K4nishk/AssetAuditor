@@ -1,0 +1,43 @@
+// Grafana Alloy config (AA-27) — scrapes worker + litellm + vllm `/metrics`
+// on the compose network (worker/docker-compose.yml) and forwards to Grafana
+// Cloud hosted Prometheus via remote_write (ADR v1.1.0 §2's `AL` node).
+// Outbound-only, matching every other service in that compose file: Alloy
+// itself publishes no port, it only opens outbound connections to scrape
+// its siblings over the docker network and to push to Grafana Cloud.
+//
+// `vllm` is compose profile-gated (--profile gpu, AA-33) — its scrape target
+// simply fails ("no such host") until that profile is brought up. Alloy logs
+// the failed scrape and keeps retrying rather than crashing, so it is safe
+// to leave this target configured unconditionally.
+//
+// Unverified: no Grafana Cloud account/credentials, and no Alloy binary,
+// exist in this sandbox — this file has never actually been run.
+
+prometheus.scrape "worker" {
+	targets = [{"__address__" = "worker:9100"}]
+	scrape_interval = "30s"
+	forward_to       = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "litellm" {
+	targets = [{"__address__" = "litellm:4000"}]
+	scrape_interval = "30s"
+	forward_to       = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "vllm" {
+	targets = [{"__address__" = "vllm:8000"}]
+	scrape_interval = "30s"
+	forward_to       = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_PROMETHEUS_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USER")
+			password = sys.env("GRAFANA_CLOUD_API_KEY")
+		}
+	}
+}

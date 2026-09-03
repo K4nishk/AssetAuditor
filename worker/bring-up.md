@@ -68,9 +68,40 @@ only — not published to the host or internet). From inside the compose
 network (e.g. `docker compose exec worker curl -s localhost:9100/metrics`),
 `worker_heartbeat_timestamp` should track `now()` within ~30s and
 `etl_jobs_queued` should match `select count(*) from public.etl_jobs where
-status = 'pending'`. Grafana Alloy scraping this endpoint into Grafana Cloud,
-and the `worker/observability/stale_while_queued_alert.yaml` alert rule that
-reads it, are wired up in AA-27.
+status = 'pending'`.
+
+## Alloy scrape + Grafana Cloud (AA-27)
+
+`worker/docker-compose.yml`'s `alloy` service (`worker/observability/alloy-config.alloy`)
+scrapes `worker:9100`, `litellm:4000`, and `vllm:8000` every 30s and forwards
+everything to Grafana Cloud hosted Prometheus via `remote_write` — set
+`GRAFANA_CLOUD_PROMETHEUS_URL`/`GRAFANA_CLOUD_PROMETHEUS_USER`/
+`GRAFANA_CLOUD_API_KEY` in `.env` (a free-tier Grafana Cloud stack's
+"Prometheus remote_write" connection details page has all three). The `vllm`
+target fails harmlessly until `--profile gpu` is up (AA-33); `alloy` retries
+rather than crashing.
+
+Once metrics are landing in Grafana Cloud:
+
+- Import `worker/observability/dashboards/assetauditor-overview.json` by hand
+  (Dashboards → New → Import) — `worker/observability/dashboards/provisioning.yaml`
+  documents the self-hosted file-provisioning path, but Grafana Cloud's hosted
+  stack has no filesystem to provision from.
+- Apply the three alert rule files under `worker/observability/` (`stale_while_queued_alert.yaml`,
+  `retention_sweeper_stale_alert.yaml`, `etl_failure_rate_alert.yaml`,
+  `llm_error_rate_alert.yaml` — four files, three alerts per mvp.md's AA-27
+  line since sweeper-stale was already defined by AA-19) via Grafana's
+  alerting file-provisioning path, or paste each rule into Alerting → New
+  alert rule by hand on the free tier. Every rule references datasource uid
+  `grafanacloud-prom` — check the actual uid Grafana Cloud assigns your
+  Prometheus data source and adjust if it differs.
+- Alerts need a contact point (email/Slack/etc.) wired up before they can
+  notify anyone — that's an owner decision (whose inbox, which channel) that
+  no sandbox can make on your behalf, so none is configured here.
+
+**Unverified**: no Grafana Cloud account/credentials, and no Alloy binary,
+exist in this sandbox — the `.alloy` config's syntax, the dashboard JSON, and
+the alert rules have never been applied to a real Grafana instance.
 
 ## Bringing the box down / recovery
 

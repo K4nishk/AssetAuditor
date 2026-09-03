@@ -1,0 +1,69 @@
+# LLM error rate alert (AA-27) — Grafana unified-alerting provisioning file
+# (apiVersion 1: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/).
+#
+# Reads `llm_requests_total{outcome,backend}`, emitted directly by
+# `worker.extract.llm_tier.extract_transactions` and
+# `worker.commentary.request_commentary` (worker/metrics.py) and scraped off
+# the worker's `/metrics` endpoint by Grafana Alloy
+# (worker/observability/alloy-config.alloy).
+#
+# `backend` (vllm|groq) is intentionally not split out in the condition — a
+# high error rate against either backend is worth paging on; the dashboard
+# panel (worker/observability/dashboards/assetauditor-overview.json) breaks
+# it down by backend for triage once the alert fires.
+#
+# Same NaN-safety note as worker/observability/etl_failure_rate_alert.yaml:
+# zero LLM traffic in the window evaluates to 0/0 = NaN, which does not fire.
+#
+# Unverified: no Grafana Cloud account/credentials exist in this sandbox;
+# this file has never been applied to a real Grafana instance.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: llm-extraction
+    folder: AssetAuditor
+    interval: 5m
+    rules:
+      - uid: llm-error-rate
+        title: LLM extraction/commentary error rate elevated
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: grafanacloud-prom
+            model:
+              expr: sum(rate(llm_requests_total{outcome="error"}[15m]))
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: grafanacloud-prom
+            model:
+              expr: sum(rate(llm_requests_total[15m]))
+              refId: B
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: math
+              # 30% of LiteLLM requests erroring in the trailing 15m window —
+              # higher tolerance than the ETL alert since a single malformed
+              # model response (schema drift, a truncated completion) is
+              # expected occasionally and shouldn't page on its own.
+              expression: "($A / $B) > 0.3"
+              refId: C
+        for: 15m
+        labels:
+          severity: warning
+          area: llm-extraction
+        annotations:
+          summary: >-
+            More than 30% of LiteLLM requests in the last 15m errored —
+            check whether Groq's free-tier RPM/TPM caps
+            (llm/litellm.config.yaml) are being hit, or the vLLM backend
+            (once promoted, AA-33) is down and LiteLLM's fallback cooldown
+            isn't recovering.

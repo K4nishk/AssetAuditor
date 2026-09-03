@@ -35,6 +35,11 @@ model_list:
 litellm_settings:
   drop_params: true
   set_verbose: false
+  # LiteLLM's built-in Prometheus integration (docs.litellm.ai/docs/proxy/prometheus)
+  # — exposes /metrics (litellm_requests_total, latency histograms, spend) for
+  # Grafana Alloy to scrape (AA-27, worker/observability/alloy-config.alloy).
+  # Unverified against a live proxy instance in this sandbox.
+  callbacks: ["prometheus"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

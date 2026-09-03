@@ -1,4 +1,4 @@
-"""FastAPI app factory. Auth, request-id, and metrics middleware land in AA-6 / AA-27.
+"""FastAPI app factory. Auth middleware lands in AA-6; metrics middleware is AA-27.
 
 Routes are mounted under `/api` so `vercel.json`'s `/api/:path*` rewrite (the
 only rule that reaches this function) matches the exact path FastAPI sees —
@@ -9,6 +9,7 @@ the same `/api/...` convention.
 
 from fastapi import FastAPI
 
+from app.obs.metrics import metrics_middleware
 from app.routes.account import router as account_router
 from app.routes.commentary import router as commentary_router
 from app.routes.dashboard import router as dashboard_router
@@ -24,6 +25,7 @@ from app.routes.uploads import router as uploads_router
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AssetAuditor")
+    app.middleware("http")(metrics_middleware)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
