@@ -46,6 +46,12 @@ jobs:
       - name: mypy
         run: uv run mypy app worker api
 
+      # Supply-chain gate (CLAUDE.md hard rule, Security-Model.md threat #5):
+      # fails the build on a known CVE in any dependency actually pinned in
+      # uv.lock. pip-audit is already a dev dependency (pyproject.toml).
+      - name: pip-audit (dependency vulnerability gate)
+        run: uv run pip-audit
+
       - name: pytest
         run: uv run pytest -v
 
@@ -72,6 +78,13 @@ jobs:
       # lockfile, this can switch back to `npm ci`.
       - run: npm install
       - run: npm run lint
+
+      # Supply-chain gate (CLAUDE.md hard rule, Security-Model.md threat #5):
+      # fails the build on a known high/critical CVE in any resolved
+      # frontend dependency. `npm install` above regenerates package-lock.json
+      # fresh each run (see its own comment), so this always audits what was
+      # actually just installed.
+      - run: npm run audit
 
       # Amplitude event schema review gate (mvp.md AA-28): fails the build if
       # any declared event schema or track() call-site payload contains an

@@ -52,6 +52,40 @@ For each fixture in `data/samples/` (start: `scotiabank_sample_statement.pdf`, t
 
 ---
 
+## Verification log — AA-29 security pass (2026-09-03)
+No live staging environment or Supabase/Vercel credentials exist in the build
+sandbox, so the boxes above are untouched — they're the owner's record of a
+real staging run, and none happened here. What could be checked at the
+code/test level for Flow 1 (deletion) and the masking-related items in Flows
+3/5:
+- Flow 1.4–1.6 (deactivate/reactivate/delete): `tests/api/test_profile_routes.py`
+  + `tests/api/test_account_routes.py` exercise the HTTP layer against a fake
+  connection; `tests/db/test_account_lifecycle_live.py` proves the FK-cascade
+  purge + lineage redaction against a real (ephemeral) Postgres — skips in
+  this sandbox (no live Postgres reachable), runs for real in CI.
+- **Gap found, not fixed here**: Flow 1.4's "direct API calls return 'account
+  deactivated'" does not hold. `users_profile.deactivated_at` is set correctly,
+  but no route besides `/api/profile*`/`/api/account` checks it — a deactivated
+  user's still-valid JWT can fully use uploads/staged/dashboard/rooms/etc. RLS
+  isn't the right layer for this (it isn't a tenancy check), so fixing it means
+  a deactivation check added consistently across every protected router — a
+  cross-cutting change, not a one-line fix, so it's flagged here for a
+  follow-up issue rather than bolted on inside this security pass.
+- Flow 3.2 / Flow 5.3 (masked account numbers, no financial data in
+  logs/Amplitude): `worker/masking.py` unit tests + all 6+1 adapter fixture
+  tests (`tests/unit/test_adapters.py`) prove every adapter emits the
+  canonical `{institution}-...{last4}` token, never a raw number, before a
+  row is ever staged. `frontend/scripts/check-analytics-schema.mjs` (AA-28's
+  CI gate) ran for real in this pass (`npm run test:analytics-events` /
+  `npm run check:analytics-events` both pass) and confirms no declared event
+  schema or call site carries an amount/account/ticker-shaped field. Log-side
+  redaction (`app.obs.logging.RedactingFilter`) is new in this pass — see
+  `tests/unit/test_obs_logging.py`.
+- Not runnable here: `npm run build`/`npm run lint` still fail on the
+  pre-existing missing `@supabase/supabase-js`/`eslint` install (AA-3/AA-6's
+  known gap, unrelated to this issue — confirmed unchanged, not a regression
+  from this pass).
+
 ## Flow template (copy to extend)
 ```markdown
 ## Flow N — <name>

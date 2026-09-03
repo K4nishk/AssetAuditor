@@ -44,6 +44,7 @@ from datetime import UTC, datetime, timedelta
 
 import asyncpg
 
+from app.obs.logging import configure_logging
 from app.uploads.blob import BlobDeleteError, BlobStorage, get_blob_storage
 from worker import metrics
 from worker.lineage import emit_lineage_event, new_run_id
@@ -210,7 +211,7 @@ async def main() -> None:
     """Standalone entrypoint (`python -m worker.retention`) for a one-off manual
     run — the primary schedule is `worker.main`'s `retention_sweep_loop`, which
     keeps the Prometheus gauge alive across sweeps on the long-lived worker box."""
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     database_url = os.environ["WORKER_DATABASE_URL"]
     conn = await asyncpg.connect(database_url)
     try:

@@ -43,6 +43,7 @@ import uuid
 
 import asyncpg
 
+from app.obs.logging import configure_logging
 from app.uploads.blob import BlobStorage, get_blob_storage
 from worker import metrics
 from worker.commentary import refresh_commentary_for_all_users
@@ -180,7 +181,7 @@ async def commentary_loop(conn: asyncpg.Connection, stop_event: asyncio.Event) -
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     database_url = os.environ["WORKER_DATABASE_URL"]
     worker_id = _default_worker_id()
     metrics_port = int(os.environ.get("WORKER_METRICS_PORT", metrics.DEFAULT_METRICS_PORT))
