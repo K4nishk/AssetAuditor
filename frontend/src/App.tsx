@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ApiError } from "./lib/api";
 import { type ProfileOut, getProfile } from "./lib/profileApi";
 import Dashboard from "./routes/Dashboard";
+import DemoSeedButton from "./routes/DemoSeedButton";
 import Login from "./routes/Login";
 import ManualEntryAccountBalance from "./routes/ManualEntryAccountBalance";
 import ManualEntryPortfolio from "./routes/ManualEntryPortfolio";
@@ -47,6 +48,7 @@ function AuthenticatedShell({
       <Button size="sm" onClick={() => void signOut()}>
         Log out
       </Button>
+      <DemoSeedButton />
     </VStack>
   );
 }
