@@ -34,7 +34,16 @@ State (all gitignored, all local): `.completed_issues` · `.review_debt.tsv` ·
 3. **Every worktree toucher takes `ops/.worktree.lock`.** Orchestrator, sweeper and
    builder share one checkout. Two `git checkout`s at once move the branch under a
    running agent.
-4. Both `orchestrator.sh` and `review_sweeper.sh` **re-exec from a copy in `$TMPDIR`**,
+4. **Merging a PR while the build runs deletes the base out from under it.** GitHub
+   removes the branch on merge; a run that computed that branch as its base minutes
+   earlier then fails `gh pr create` with "Base ref must be a branch". This cost
+   KCH-61 its PR on 2026-09-02. The push had already succeeded, so nothing was lost —
+   but the failure was silent, because the error string became the "PR number", gate
+   evidence went to a PR that did not exist, and the issue was still recorded
+   complete. Both are now guarded: a vanished base retargets to `development`, and a
+   failed creation is reported loudly with the command to open it by hand. **When you
+   review a stack mid-run, expect the branch under the in-flight issue to move.**
+5. Both `orchestrator.sh` and `review_sweeper.sh` **re-exec from a copy in `$TMPDIR`**,
    because they rewrite the worktree they live in. State stays in the repo via
    `AA_REAL_OPS`. (This is also what let the scripts be recovered after they were
    deleted mid-run — the relocated copy survived.)

@@ -902,6 +902,18 @@ $(echo "$output" | tail -30)
   [ -n "$stray" ] && log "$identifier: note — untracked files left behind, NOT committed: $(echo "$stray" | tr '\n' ' ')"
 
   git push -u origin "$branch" --quiet
+
+  # The base can vanish between this run starting and the PR opening: merging the
+  # parent PR deletes its branch. That is exactly what broke KCH-61 — its base
+  # feature/kch-60 was deleted by the merge of #25 fifteen minutes into the run, and
+  # `gh pr create` died with "Base ref must be a branch". A deleted base means its
+  # work is in development by definition, so retarget there rather than fail.
+  if [ "$base_branch" != "development" ] && \
+     ! git ls-remote --exit-code --heads origin "$base_branch" >/dev/null 2>&1; then
+    log "$identifier: base '$base_branch' no longer exists on the remote (parent merged mid-run) — retargeting this PR to development."
+    base_branch="development"
+  fi
+
   local stack_note=""
   [ "$base_branch" != "development" ] && stack_note="
 
@@ -937,6 +949,32 @@ _Spec: \`mvp.md\` ($identifier) · Architecture: \`docs/adr/ADR_v1.1.0.md\`_" \
     --base "$base_branch" --head "$branch" 2>&1 | tail -1)
 
   local pr_number; pr_number=$(basename "$pr_url")
+
+  # `gh pr create` failing used to fall straight through: the error string became the
+  # "PR number", gate evidence was published to a PR that does not exist, and the
+  # issue was still written to .completed_issues — so it never retried and the
+  # failure was invisible. That is how KCH-61 read as lost work for a day.
+  #
+  # It still counts as complete: the branch IS pushed, so the work is safe, and a
+  # retry would redo the issue and then fail to push over the existing remote branch.
+  # What changes is that the failure is now loud and carries its own fix.
+  if ! printf '%s' "$pr_number" | grep -qE '^[0-9]+$'; then
+    log "$identifier: *** PR CREATION FAILED *** $pr_url"
+    log "$identifier: the branch is pushed and the work is safe. Open the PR by hand:"
+    log "$identifier:   gh pr create --base $base_branch --head $branch --title \"$identifier: $title\""
+    comment_on_issue "$issue_uuid" "⚠️ Work is committed and pushed to \`$branch\`, but opening the PR failed:
+
+\`\`\`
+$pr_url
+\`\`\`
+
+Nothing is lost — open it by hand with \`gh pr create --base $base_branch --head $branch\`."
+    report "- ⛔ **$identifier** $title — work pushed to \`$branch\` but **PR creation FAILED**. Nothing lost; open it by hand: \`gh pr create --base $base_branch --head $branch\` · CodeRabbit: $CR_STATUS"
+    set_issue_state "$issue_uuid" "In Review"
+    echo "$identifier" >> "$STATE_FILE"
+    log "$identifier done (branch pushed, PR NOT created)."
+    release_worktree; return 0
+  fi
   # Bank any unfinished review now that the PR exists, so the sweeper can find it.
   case "$CR_STATUS" in
     deferred)            record_review_debt "$pr_number" "$branch" "$identifier" "never_reviewed" ;;
