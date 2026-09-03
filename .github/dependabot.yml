@@ -1,0 +1,25 @@
+--- # Security-Model.md threat #5 ("Supply chain -> lockfiles, Dependabot,
+    # pip-audit/npm audit in CI"): Dependabot opens the update PRs, the CI
+    # gates (.github/workflows/ci.yml's `pip-audit`/`npm audit` steps) catch
+    # anything already vulnerable in between. `open-pull-requests-limit` kept
+    # low deliberately — this is a single-user hobby project, not a team that
+    # can triage a flood of bump PRs.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

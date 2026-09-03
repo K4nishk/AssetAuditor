@@ -9,6 +9,7 @@ the same `/api/...` convention.
 
 from fastapi import FastAPI
 
+from app.obs.logging import configure_logging
 from app.obs.metrics import metrics_middleware
 from app.routes.account import router as account_router
 from app.routes.commentary import router as commentary_router
@@ -24,6 +25,8 @@ from app.routes.uploads import router as uploads_router
 
 
 def create_app() -> FastAPI:
+    configure_logging()
+
     app = FastAPI(title="AssetAuditor")
     app.middleware("http")(metrics_middleware)
 

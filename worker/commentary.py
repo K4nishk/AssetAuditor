@@ -40,6 +40,7 @@ from app.domain.audit_commentary import (
     filter_advice_shaped,
     render_facts_for_prompt,
 )
+from app.obs.logging import configure_logging
 from worker import metrics
 from worker.lineage import LineageEmitter
 
@@ -361,7 +362,7 @@ async def main() -> None:
     """Standalone entrypoint (`python -m worker.commentary`) for a one-off
     manual run — the primary schedule is `worker.main`'s `commentary_loop`,
     same split `worker/prices.py`'s `main()` documents for the price refresh."""
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     database_url = os.environ["WORKER_DATABASE_URL"]
     conn = await asyncpg.connect(database_url)
     try:

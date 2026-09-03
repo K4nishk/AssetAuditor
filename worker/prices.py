@@ -54,6 +54,7 @@ import asyncpg
 
 from app.db.queries import prices as prices_queries
 from app.domain.prices import fx_symbol_for_currency, price_symbol_for_ticker
+from app.obs.logging import configure_logging
 from worker import metrics
 
 logger = logging.getLogger("worker.prices")
@@ -207,7 +208,7 @@ async def main() -> None:
     run — the "on-demand refresh" mvp.md's AA-21 asks for. The primary
     schedule is `worker.main`'s `price_refresh_loop`, same split
     `worker/retention.py`'s `main()` documents for the retention sweep."""
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     database_url = os.environ["WORKER_DATABASE_URL"]
     conn = await asyncpg.connect(database_url)
     try:
