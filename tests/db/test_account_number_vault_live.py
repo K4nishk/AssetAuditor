@@ -192,30 +192,80 @@ async def test_ciphertext_copied_onto_another_account_id_fails_to_decrypt(pg_clu
 
 
 async def test_direct_table_access_is_revoked_for_authenticated(pg_cluster, seeded_db):
+    """Migration 0001 grants `authenticated` select/insert/update/delete on the
+    vault table; 0004 revokes all four so the only way in is the two SECURITY
+    DEFINER functions. A rejected `select` alone would still pass if a later
+    migration left, say, `insert` behind — hence the per-privilege check."""
+    admin = await _admin_conn(pg_cluster, seeded_db["dbname"])
     conn = await _authenticated_conn_as(pg_cluster, seeded_db["dbname"], seeded_db["user_id"])
     try:
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await conn.fetch("select * from public.account_number_vault")
+
+        for privilege in ("select", "insert", "update", "delete"):
+            granted = await admin.fetchval(
+                "select has_table_privilege("
+                "'authenticated'::name, 'public.account_number_vault'::text, $1::text)",
+                privilege,
+            )
+            assert granted is False, f"authenticated still holds {privilege} on the vault table"
     finally:
         await conn.close()
+        await admin.close()
 
 
-async def test_store_rejects_an_account_id_owned_by_another_user(pg_cluster, seeded_db):
+async def test_store_and_reveal_reject_an_account_id_owned_by_another_user(pg_cluster, seeded_db):
+    """The foreign user gets an active `users_profile` of their own, so both
+    functions' profile guard passes and the call reaches the account-ownership
+    check — otherwise this would pass for the wrong reason (missing profile)
+    and prove nothing about tenant isolation."""
     admin = await _admin_conn(pg_cluster, seeded_db["dbname"])
+    owner = await _authenticated_conn_as(pg_cluster, seeded_db["dbname"], seeded_db["user_id"])
     try:
+        await owner.execute(
+            "select public.vault_store_account_number($1, $2)",
+            seeded_db["account_id"],
+            "1234567890",
+        )
+
         other_user_id = uuid.uuid4()
         await admin.execute("insert into auth.users (id) values ($1)", other_user_id)
+        await admin.execute(
+            """
+            insert into public.users_profile
+                (id, age, holdings_country, year_in_canada, risk_profile)
+            values ($1, 41, 'CA', 2015, 'low')
+            """,
+            other_user_id,
+        )
         conn = await _authenticated_conn_as(pg_cluster, seeded_db["dbname"], other_user_id)
         try:
             with pytest.raises(asyncpg.RaiseError, match="not found for the current user"):
                 await conn.execute(
                     "select public.vault_store_account_number($1, $2)",
                     seeded_db["account_id"],
-                    "1234567890",
+                    "0000000000",
                 )
+            # Reveal denies by returning null rather than raising — its row lookup
+            # is scoped to `user_id = auth.uid()`, so the stored row is invisible.
+            assert (
+                await conn.fetchval(
+                    "select public.vault_reveal_account_number($1)", seeded_db["account_id"]
+                )
+                is None
+            )
         finally:
             await conn.close()
+
+        # The owner's stored value survived the foreign user's failed store.
+        assert (
+            await owner.fetchval(
+                "select public.vault_reveal_account_number($1)", seeded_db["account_id"]
+            )
+            == "1234567890"
+        )
     finally:
+        await owner.close()
         await admin.close()
 
 
