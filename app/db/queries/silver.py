@@ -33,6 +33,12 @@ _ENTITIES = ("account", "holding", "lot", "transaction", "liability")
 _FIND_ACCOUNTS_SQL = """
     select masked_identifier, id from public.accounts where user_id = $1
 """
+_FIND_HOLDINGS_SQL = """
+    select a.masked_identifier as account_mask, h.ticker, h.id
+    from public.holdings h
+    join public.accounts a on a.id = h.account_id
+    where h.user_id = $1
+"""
 _INSERT_ACCOUNT_SQL = """
     insert into public.accounts (user_id, institution, account_type, masked_identifier, currency)
     values ($1, $2, $3, $4, $5)
@@ -97,7 +103,7 @@ async def write_confirmed_rows(
         account_by_mask[mask] = account_id
         summary["account"] += 1
 
-    holding_by_key: dict[tuple[str, str], Any] = {}
+    holding_by_key = await _preload_holdings(conn, user_id=user_id)
     for payload in by_entity["holding"]:
         mask = _require(payload, "account_mask", entity="holding")
         ticker = _require(payload, "ticker", entity="holding")
@@ -182,6 +188,13 @@ async def write_confirmed_rows(
 async def _preload_accounts(conn: asyncpg.Connection, *, user_id: str) -> dict[str, Any]:
     rows = await conn.fetch(_FIND_ACCOUNTS_SQL, user_id)
     return {row["masked_identifier"]: row["id"] for row in rows}
+
+
+async def _preload_holdings(
+    conn: asyncpg.Connection, *, user_id: str
+) -> dict[tuple[str, str], Any]:
+    rows = await conn.fetch(_FIND_HOLDINGS_SQL, user_id)
+    return {(row["account_mask"], row["ticker"]): row["id"] for row in rows}
 
 
 def _resolve_account(account_by_mask: dict[str, Any], mask: str, *, entity: str) -> Any:

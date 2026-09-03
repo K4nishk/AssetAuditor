@@ -199,10 +199,18 @@ async def test_list_rows_for_job_is_scoped_by_rls_not_just_its_where_clause(
 
     # Sanity check: RLS is scoping the read, not eating every row outright —
     # the row is genuinely there and visible to its own user.
-    rows_for_owner = await staged_rows.list_rows_for_job(
-        admin, user_id=seeded_db["user_id"], job_id=seeded_db["job_id"]
-    )
-    assert [r["id"] for r in rows_for_owner] == [victim_row["id"]]
+    owner_conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
+    try:
+        async with owner_conn.transaction():
+            await owner_conn.execute(
+                "select set_config('request.jwt.claim.sub', $1, true)", seeded_db["user_id"]
+            )
+            rows_for_owner = await staged_rows.list_rows_for_job(
+                owner_conn, user_id=seeded_db["user_id"], job_id=seeded_db["job_id"]
+            )
+            assert [r["id"] for r in rows_for_owner] == [victim_row["id"]]
+    finally:
+        await owner_conn.close()
 
 
 # --- confirm -> silver ---------------------------------------------------------
