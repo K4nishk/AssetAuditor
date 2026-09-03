@@ -29,7 +29,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app.db.queries import gold as gold_queries
-from app.domain.gold import GoldTotals, compute_gold_totals
+from app.db.queries import prices as prices_queries
+from app.domain.dashboard import reconcile_assets_to_cad
+from app.domain.gold import AssetValuation, GoldTotals, compute_gold_totals
+from app.domain.prices import CAD, fx_symbol_for_currency
 from app.domain.rooms.links import derive_contribution_room_events
 from app.uploads.blob import BlobStorage
 from worker.lineage import LineageEmitter
@@ -68,6 +71,8 @@ async def rebuild_gold(
             assets = gold_queries.holding_valuations(
                 silver
             ) + gold_queries.cash_balances_by_account(silver.cash_transactions)
+            fx_rates = await _fetch_fx_rates(conn, assets=assets, as_of=snapshot_date)
+            assets = reconcile_assets_to_cad(assets, fx_rates=fx_rates)
             totals = compute_gold_totals(assets, silver.liabilities)
 
             await gold_queries.write_gold_snapshot(
@@ -137,6 +142,22 @@ async def rebuild_gold(
         silver_paths=silver_paths,
         gold_csv_paths=gold_csv_paths,
     )
+
+
+async def _fetch_fx_rates(
+    conn: asyncpg.Connection, *, assets: list[AssetValuation], as_of: date
+) -> dict[str, Decimal]:
+    """Latest same-day-or-earlier FX rate (AA-21's `public.prices`) for every
+    non-CAD currency this rebuild's assets are denominated in."""
+    currencies = {asset.currency.strip().upper() for asset in assets} - {CAD}
+    rates: dict[str, Decimal] = {}
+    for currency in currencies:
+        row = await prices_queries.latest_price_on_or_before(
+            conn, ticker=fx_symbol_for_currency(currency), as_of=as_of
+        )
+        if row is not None:
+            rates[currency] = row["close"]
+    return rates
 
 
 def silver_pathname(user_id: str, entity: str) -> str:

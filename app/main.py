@@ -10,6 +10,7 @@ the same `/api/...` convention.
 from fastapi import FastAPI
 
 from app.routes.account import router as account_router
+from app.routes.dashboard import router as dashboard_router
 from app.routes.manual_entry import router as manual_entry_router
 from app.routes.profile import router as profile_router
 from app.routes.rooms import router as rooms_router
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(profile_router)
     app.include_router(rooms_router)
     app.include_router(account_router)
+    app.include_router(dashboard_router)
 
     return app
 

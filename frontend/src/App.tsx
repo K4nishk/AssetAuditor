@@ -5,6 +5,7 @@ import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes } from "reac
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ApiError } from "./lib/api";
 import { type ProfileOut, getProfile } from "./lib/profileApi";
+import Dashboard from "./routes/Dashboard";
 import Login from "./routes/Login";
 import ManualEntryAccountBalance from "./routes/ManualEntryAccountBalance";
 import ManualEntryPortfolio from "./routes/ManualEntryPortfolio";
@@ -28,6 +29,9 @@ function AuthenticatedShell({
     <VStack align="start" spacing={2} p={8}>
       <Heading size="md">AssetAuditor</Heading>
       <Text color="gray.500">Signed in as {session?.user.email}.</Text>
+      <Button as={RouterLink} to="/dashboard" size="sm" colorScheme="teal">
+        Dashboard
+      </Button>
       {profile.shows_room_widgets ? (
         <Button as={RouterLink} to="/rooms" size="sm" colorScheme="teal" variant="outline">
           Contribution rooms
@@ -170,6 +174,7 @@ function AppRoutes() {
       <Route path="/manual-entry/portfolio" element={<ManualEntryPortfolio />} />
       <Route path="/manual-entry/account-balance" element={<ManualEntryAccountBalance />} />
       <Route path="/rooms" element={<RoomsRoute />} />
+      <Route path="/dashboard" element={<Dashboard />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );
