@@ -41,9 +41,17 @@ let cachedDeviceId: string | null = null;
 
 function getDeviceId(): string {
   if (cachedDeviceId) return cachedDeviceId;
-  const stored = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
-  const deviceId = stored ?? crypto.randomUUID();
-  if (!stored) window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, deviceId);
+  let deviceId: string;
+  try {
+    const stored = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+    deviceId = stored ?? crypto.randomUUID();
+    if (!stored) window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, deviceId);
+  } catch {
+    // Storage can throw (Safari private mode, QuotaExceededError, sandboxed
+    // iframe SecurityError) — fall back to an in-memory-only id rather than
+    // letting track() throw (see its own no-op contract above).
+    deviceId = crypto.randomUUID();
+  }
   cachedDeviceId = deviceId;
   return deviceId;
 }

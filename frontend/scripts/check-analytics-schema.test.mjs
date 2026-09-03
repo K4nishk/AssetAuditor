@@ -75,6 +75,33 @@ test("call-site check flags a forbidden inline payload field", () => {
   }
 });
 
+test("schema declaration flags a computed key as unverifiable", () => {
+  const { dir, file } = withTempFile(
+    `const key = "statement_uploaded";\nexport const ANALYTICS_EVENT_SCHEMAS = {\n  [key]: ["institution"],\n} as const;\n`,
+  );
+  try {
+    const violations = checkSchemaDeclarations(file);
+    assert.equal(violations.length, 1);
+    assert.match(violations[0].message, /unrecognized schema entry/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("call-site check flags a computed payload key as unverifiable", () => {
+  const { dir, file } = withTempFile(
+    `import { track } from "../lib/analytics";\nfunction onClick(key) {\n  track("dashboard_drilldown", { chart: "term_bucket", [key]: 1 });\n}\n`,
+    ".tsx",
+  );
+  try {
+    const violations = checkCallSites(file);
+    assert.equal(violations.length, 1);
+    assert.match(violations[0].message, /spread\/computed/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("call-site check flags a spread payload as unverifiable", () => {
   const { dir, file } = withTempFile(
     `import { track } from "../lib/analytics";\nfunction onClick(extra) {\n  track("dashboard_drilldown", { chart: "term_bucket", ...extra });\n}\n`,

@@ -80,7 +80,7 @@ export function checkSchemaDeclarations(filePath) {
         });
       } else {
         for (const prop of objectLiteral.properties) {
-          if (!ts.isPropertyAssignment(prop)) {
+          if (!ts.isPropertyAssignment(prop) || ts.isComputedPropertyName(prop.name)) {
             violations.push({
               file: filePath,
               line: lineOf(source, prop),
@@ -143,7 +143,8 @@ export function checkCallSites(filePath) {
           });
         } else {
           for (const prop of payloadArg.properties) {
-            if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
+            const isComputed = ts.isPropertyAssignment(prop) && ts.isComputedPropertyName(prop.name);
+            if ((ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) && !isComputed) {
               const key = stripQuotes(prop.name.getText(source));
               checkName(key, prop, filePath, source, violations);
             } else {
