@@ -34,6 +34,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { ApiError } from "../lib/api";
+import { type CommentaryOut, getCommentary } from "../lib/commentaryApi";
 import {
   type DashboardOut,
   type DiversificationCut,
@@ -379,11 +380,43 @@ function DrillDownPanel({
   );
 }
 
+// Audit commentary card (mvp.md AA-25): plain-language observations the
+// worker's LLM tier generated from this user's own gold facts (never fetched
+// live from here — ADR v1.1.0 §3, the LLM only ever runs on the worker).
+// `disclosure` renders unconditionally alongside the observations per AA-25's
+// generated-text-disclosure requirement; a 404 (no card generated yet) is a
+// normal state handled by `getCommentary` returning `null`, not an error.
+function CommentaryCard({ commentary }: { commentary: CommentaryOut | null }) {
+  if (commentary === null) {
+    return null;
+  }
+
+  return (
+    <Box borderWidth="1px" borderRadius="md" p={4}>
+      <Heading size="sm" mb={3}>
+        Observations
+      </Heading>
+      <VStack align="stretch" spacing={2} mb={3}>
+        {commentary.observations.map((observation, index) => (
+          <Text key={index} fontSize="sm">
+            {observation}
+          </Text>
+        ))}
+      </VStack>
+      <Text fontSize="xs" color="gray.500">
+        {commentary.disclosure}
+      </Text>
+    </Box>
+  );
+}
+
 export default function Dashboard() {
   const [data, setData] = useState<DashboardOut | null>(null);
   const [cut, setCut] = useState<DiversificationCut>("institution");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [commentary, setCommentary] = useState<CommentaryOut | null>(null);
 
   const [drillDownOpen, setDrillDownOpen] = useState(false);
   const [drillDownLoading, setDrillDownLoading] = useState(false);
@@ -406,6 +439,19 @@ export default function Dashboard() {
   useEffect(() => {
     void load(cut);
   }, [load, cut]);
+
+  useEffect(() => {
+    // Independent of `cut`/the pie data — the card doesn't change with the
+    // diversification-cut switcher, so it only needs to load once. The
+    // worker refreshes commentary on its own schedule (`commentary_loop`),
+    // so the card returned here can be older than the dashboard's latest
+    // snapshot; the render below only shows it when its `as_of` matches
+    // `data.as_of`, rather than showing an observation dated for a
+    // different snapshot without saying so.
+    void getCommentary()
+      .then(setCommentary)
+      .catch(() => setCommentary(null));
+  }, []);
 
   const openDrillDown = useCallback(async (selector: SliceSelector) => {
     const requestId = ++drillDownRequestId.current;
@@ -537,6 +583,8 @@ export default function Dashboard() {
           />
         </Box>
       </SimpleGrid>
+
+      <CommentaryCard commentary={commentary?.as_of === data.as_of ? commentary : null} />
 
       <DrillDownPanel
         isOpen={drillDownOpen}
