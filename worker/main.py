@@ -24,6 +24,12 @@ AA-21 adds `price_refresh_loop`, same shape again, running
 `worker.prices.refresh_prices` once a day — the "daily cron" mvp.md's AA-21
 describes; `python -m worker.prices` (see that module's docstring) covers
 the "on-demand refresh" half of the same issue.
+
+AA-25 adds `commentary_loop`, same shape again, running
+`worker.commentary.refresh_commentary_for_all_users` once a day so every
+user's dashboard "observations" card (ADR v1.1.0 §3: LLM calls only ever
+originate on the worker) stays current with their latest gold snapshot;
+`python -m worker.commentary` covers the on-demand run.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ import asyncpg
 
 from app.uploads.blob import BlobStorage, get_blob_storage
 from worker import metrics
+from worker.commentary import refresh_commentary_for_all_users
 from worker.prices import PriceFetcher, YFinancePriceFetcher, refresh_prices
 from worker.queue import claim_next_job, count_queued_jobs
 from worker.retention import run_retention_sweep
@@ -47,6 +54,7 @@ HEARTBEAT_INTERVAL_SECONDS = 30
 JOB_POLL_INTERVAL_SECONDS = 5
 RETENTION_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
 PRICE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
+COMMENTARY_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
 
 logger = logging.getLogger("worker")
 
@@ -148,6 +156,29 @@ async def price_refresh_loop(
             pass
 
 
+async def commentary_loop(conn: asyncpg.Connection, stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            result = await refresh_commentary_for_all_users(conn)
+            logger.info(
+                "audit commentary refresh complete: users_updated=%s users_failed=%s",
+                result.users_updated,
+                result.users_failed,
+            )
+        except Exception:
+            # Same deliberately-broad convention as retention_sweep_loop/
+            # price_refresh_loop: one bad cycle must not crash the whole
+            # worker process, and per-user failures are already isolated and
+            # counted inside refresh_commentary_for_all_users itself — this
+            # only catches something breaking before/after that loop (e.g.
+            # the initial `select distinct user_id` query).
+            logger.exception("audit commentary refresh failed; will retry next interval")
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=COMMENTARY_REFRESH_INTERVAL_SECONDS)
+        except TimeoutError:
+            pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     database_url = os.environ["WORKER_DATABASE_URL"]
@@ -161,6 +192,7 @@ async def main() -> None:
     queue_conn = await asyncpg.connect(database_url)
     retention_conn = await asyncpg.connect(database_url)
     price_conn = await asyncpg.connect(database_url)
+    commentary_conn = await asyncpg.connect(database_url)
     stop_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -171,12 +203,14 @@ async def main() -> None:
         metrics.start_metrics_server(metrics_port)
         logger.info(
             "worker starting (id=%s, heartbeat_interval=%ss, job_poll_interval=%ss, "
-            "retention_sweep_interval=%ss, price_refresh_interval=%ss, metrics_port=%s)",
+            "retention_sweep_interval=%ss, price_refresh_interval=%ss, "
+            "commentary_refresh_interval=%ss, metrics_port=%s)",
             worker_id,
             HEARTBEAT_INTERVAL_SECONDS,
             JOB_POLL_INTERVAL_SECONDS,
             RETENTION_SWEEP_INTERVAL_SECONDS,
             PRICE_REFRESH_INTERVAL_SECONDS,
+            COMMENTARY_REFRESH_INTERVAL_SECONDS,
             metrics_port,
         )
         await asyncio.gather(
@@ -184,12 +218,14 @@ async def main() -> None:
             job_poll_loop(queue_conn, stop_event, worker_id=worker_id),
             retention_sweep_loop(retention_conn, stop_event, blob=get_blob_storage()),
             price_refresh_loop(price_conn, stop_event, fetcher=YFinancePriceFetcher()),
+            commentary_loop(commentary_conn, stop_event),
         )
     finally:
         await heartbeat_conn.close()
         await queue_conn.close()
         await retention_conn.close()
         await price_conn.close()
+        await commentary_conn.close()
 
 
 if __name__ == "__main__":
