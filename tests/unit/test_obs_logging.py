@@ -27,6 +27,12 @@ def test_redact_log_text_masks_a_bare_long_digit_run():
     assert text.endswith("...0123 flagged")
 
 
+def test_redact_log_text_masks_an_eight_digit_account_shaped_run():
+    text = redact_log_text("account number 12345678 flagged")
+    assert "12345678" not in text
+    assert text.endswith("...5678 flagged")
+
+
 def test_redact_log_text_masks_email_and_sin():
     text = redact_log_text("user alex@example.com SIN 123-456-789 failed parse")
     assert "alex@example.com" not in text
@@ -92,3 +98,27 @@ def test_json_formatter_includes_exc_info_when_present():
         )
     payload = json.loads(formatter.format(record))
     assert "ValueError: boom" in payload["exc_info"]
+
+
+def test_json_formatter_redacts_sensitive_data_in_exc_info():
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(RedactingFilter())
+    handler.setFormatter(JsonFormatter())
+
+    logger = logging.getLogger("test.obs.logging.exc_info_redaction")
+    logger.setLevel(logging.ERROR)
+    logger.addHandler(handler)
+    logger.propagate = False
+    try:
+        try:
+            raise ValueError("account 1234567890123 for alex@example.com failed")
+        except ValueError:
+            logger.exception("processing failed")
+    finally:
+        logger.removeHandler(handler)
+
+    payload = json.loads(stream.getvalue())
+    assert "1234567890123" not in payload["exc_info"]
+    assert "alex@example.com" not in payload["exc_info"]
+    assert "ValueError" in payload["exc_info"]

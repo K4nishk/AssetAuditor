@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 
 from worker.masking import redact_pii
 
-_DIGIT_RUN_RE = re.compile(r"\b(?:\d[ -]?){8,}\d\b")
+_DIGIT_RUN_RE = re.compile(r"\b(?:\d[ -]?){7,}\d\b")
 
 
 def _redact_digit_runs(text: str) -> str:
@@ -72,7 +72,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = redact_log_text(self.formatException(record.exc_info))
         return json.dumps(payload)
 
 

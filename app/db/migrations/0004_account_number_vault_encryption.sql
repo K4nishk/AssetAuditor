@@ -23,6 +23,13 @@
 -- policy. `set search_path = ''` + fully-qualified references throughout avoid a
 -- search-path hijack of a SECURITY DEFINER function (every unqualified name in a
 -- SECURITY DEFINER body resolves in the *caller's* search_path unless pinned).
+--
+-- Both also require an active `users_profile` row (`deactivated_at is null`),
+-- same freeze semantics `app.db.queries.users_profile`'s guarded upsert and
+-- `account_lifecycle.deactivate_account` already enforce elsewhere
+-- (Data-Retention-and-Privacy.md: "Deactivate ... data frozen, excluded from
+-- all processing"): a deactivated user's account numbers must not be
+-- readable or writable even though `auth.uid()` still resolves for them.
 
 select pgsodium.create_key(name => 'account_number_vault')
 where not exists (
@@ -50,7 +57,12 @@ declare
 begin
     select user_id into v_user_id
     from public.accounts
-    where id = p_account_id and user_id = auth.uid();
+    where id = p_account_id
+      and user_id = auth.uid()
+      and exists (
+          select 1 from public.users_profile
+          where id = auth.uid() and deactivated_at is null
+      );
 
     if v_user_id is null then
         raise exception 'account % not found for the current user', p_account_id;
@@ -89,7 +101,11 @@ begin
     from public.account_number_vault
     where account_id = p_account_id
       and user_id = auth.uid()
-      and deactivated_at is null;
+      and deactivated_at is null
+      and exists (
+          select 1 from public.users_profile
+          where id = auth.uid() and deactivated_at is null
+      );
 
     if v_ciphertext is null then
         return null;

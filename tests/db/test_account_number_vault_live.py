@@ -80,6 +80,14 @@ async def seeded_db(pg_cluster, scratch_database):
 
         user_id = uuid.uuid4()
         await admin.execute("insert into auth.users (id) values ($1)", user_id)
+        await admin.execute(
+            """
+            insert into public.users_profile
+                (id, age, holdings_country, year_in_canada, risk_profile)
+            values ($1, 35, 'CA', 2009, 'medium')
+            """,
+            user_id,
+        )
         account_id = await admin.fetchval(
             """
             insert into public.accounts (user_id, institution, account_type)
@@ -220,3 +228,46 @@ async def test_reveal_returns_null_when_no_row_is_stored_for_the_account(pg_clus
         assert revealed is None
     finally:
         await conn.close()
+
+
+async def test_store_is_denied_after_the_user_is_deactivated(pg_cluster, seeded_db):
+    admin = await _admin_conn(pg_cluster, seeded_db["dbname"])
+    conn = await _authenticated_conn_as(pg_cluster, seeded_db["dbname"], seeded_db["user_id"])
+    try:
+        await admin.execute(
+            "update public.users_profile set deactivated_at = now() where id = $1",
+            seeded_db["user_id"],
+        )
+
+        with pytest.raises(asyncpg.RaiseException, match="not found for the current user"):
+            await conn.execute(
+                "select public.vault_store_account_number($1, $2)",
+                seeded_db["account_id"],
+                "1234567890",
+            )
+    finally:
+        await conn.close()
+        await admin.close()
+
+
+async def test_reveal_is_denied_after_the_user_is_deactivated(pg_cluster, seeded_db):
+    admin = await _admin_conn(pg_cluster, seeded_db["dbname"])
+    conn = await _authenticated_conn_as(pg_cluster, seeded_db["dbname"], seeded_db["user_id"])
+    try:
+        await conn.execute(
+            "select public.vault_store_account_number($1, $2)",
+            seeded_db["account_id"],
+            "1234567890",
+        )
+        await admin.execute(
+            "update public.users_profile set deactivated_at = now() where id = $1",
+            seeded_db["user_id"],
+        )
+
+        revealed = await conn.fetchval(
+            "select public.vault_reveal_account_number($1)", seeded_db["account_id"]
+        )
+        assert revealed is None
+    finally:
+        await conn.close()
+        await admin.close()
