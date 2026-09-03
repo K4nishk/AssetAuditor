@@ -72,6 +72,15 @@ jobs:
       # lockfile, this can switch back to `npm ci`.
       - run: npm install
       - run: npm run lint
+
+      # Amplitude event schema review gate (mvp.md AA-28): fails the build if
+      # any declared event schema or track() call-site payload contains an
+      # amount/ticker/account-shaped field — behaviour events only (CLAUDE.md
+      # rule #2, Assumption A13). Independent of tsc's type checking below so
+      # the gate still holds even if a payload type gets loosened later.
+      - run: npm run test:analytics-events
+      - run: npm run check:analytics-events
+
       - run: npm run build
 
   migration-dry-run:
