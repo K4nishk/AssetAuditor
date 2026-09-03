@@ -39,8 +39,8 @@ _INSERT_ACCOUNT_SQL = """
     returning id
 """
 _INSERT_HOLDING_SQL = """
-    insert into public.holdings (user_id, account_id, ticker, quantity, avg_cost, currency)
-    values ($1, $2, $3, $4, $5, $6)
+    insert into public.holdings (user_id, account_id, ticker, quantity, avg_cost, currency, mer_pct)
+    values ($1, $2, $3, $4, $5, $6, $7)
     returning id
 """
 _INSERT_LOT_SQL = """
@@ -110,6 +110,7 @@ async def write_confirmed_rows(
             to_decimal(_require(payload, "quantity", entity="holding")),
             to_decimal(payload.get("avg_cost")),
             payload.get("currency") or "CAD",
+            to_decimal(payload.get("mer_pct")),
         )
         holding_by_key[(mask, ticker)] = holding_id
         summary["holding"] += 1

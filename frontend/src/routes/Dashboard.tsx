@@ -31,7 +31,22 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { ApiError } from "../lib/api";
 import { type CommentaryOut, getCommentary } from "../lib/commentaryApi";
@@ -39,8 +54,11 @@ import {
   type DashboardOut,
   type DiversificationCut,
   type DiversificationSlice,
+  type NetWorthHistoryOut,
   getDashboard,
+  getNetWorthHistory,
 } from "../lib/dashboardApi";
+import { type FeeDragOut, getFeeDrag } from "../lib/feesApi";
 import { type LineageSlice, type SliceSelector, getLineageSlice } from "../lib/lineageApi";
 
 // Dashboard screen (mvp.md AA-22): the KPI row + three pies — term-buckets,
@@ -211,6 +229,112 @@ function HoverPie({
           <Legend />
         </PieChart>
       </ResponsiveContainer>
+    </Box>
+  );
+}
+
+// Net-worth-over-time line (mvp.md AA-26): `worker.gold.rebuild_gold` isn't
+// wired into a recurring caller yet (AA-18/AA-22's own docstrings), so most
+// users will only ever have zero or one `networth_snapshots` row today — a
+// single point can't draw a line, so that's rendered as an honest "not
+// enough history yet" state rather than a one-dot chart.
+function NetWorthHistoryChart({ history }: { history: NetWorthHistoryOut | null }) {
+  if (history === null || history.points.length < 2) {
+    return (
+      <Box borderWidth="1px" borderRadius="md" p={4}>
+        <Heading size="sm" mb={3}>
+          Net worth over time
+        </Heading>
+        <Text color="gray.500" fontSize="sm">
+          Not enough history yet — check back after your next snapshot.
+        </Text>
+      </Box>
+    );
+  }
+
+  const data = history.points.map((point) => ({
+    date: point.snapshot_date,
+    netWorth: Number(point.net_worth_cad),
+  }));
+
+  return (
+    <Box borderWidth="1px" borderRadius="md" p={4}>
+      <Heading size="sm" mb={3}>
+        Net worth over time
+      </Heading>
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={data} margin={{ left: 8, right: 16 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e2e2" />
+          <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+          <YAxis tickFormatter={(value: number) => formatCad(value)} width={90} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(value: number) => formatCad(value)} />
+          <Line
+            type="monotone"
+            dataKey="netWorth"
+            name="Net worth"
+            stroke={PALETTE[0]}
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </Box>
+  );
+}
+
+// Fee-drag bar / MER comparison (mvp.md AA-26): only holdings whose source
+// statement actually disclosed a MER appear here (`worker.adapters.td` is
+// the only adapter that captures one today) — a fund with no disclosed MER
+// is left out rather than assigned a guessed rate, same posture
+// `app.domain.etf_classification` takes for unclassified tickers.
+function FeeDragChart({ feeDrag }: { feeDrag: FeeDragOut | null }) {
+  if (feeDrag === null || feeDrag.rows.length === 0) {
+    return (
+      <Box borderWidth="1px" borderRadius="md" p={4}>
+        <Heading size="sm" mb={3}>
+          Fee drag (MER comparison)
+        </Heading>
+        <Text color="gray.500" fontSize="sm">
+          None of your statements have disclosed a fund's MER yet.
+        </Text>
+      </Box>
+    );
+  }
+
+  const benchmark = Number(feeDrag.benchmark_mer_pct);
+  const data = feeDrag.rows.map((row) => ({
+    ticker: row.ticker,
+    merPct: Number(row.mer_pct),
+  }));
+
+  return (
+    <Box borderWidth="1px" borderRadius="md" p={4}>
+      <Heading size="sm" mb={3}>
+        Fee drag (MER comparison)
+      </Heading>
+      <Text color="gray.500" fontSize="xs" mb={2}>
+        Disclosed MER per fund vs. a low-cost benchmark ({benchmark.toFixed(2)}%). Not a
+        recommendation to switch — just what your own statements say each fund costs.
+      </Text>
+      <ResponsiveContainer width="100%" height={260}>
+        <BarChart data={data} layout="vertical" margin={{ left: 16, right: 24 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e2e2" />
+          <XAxis type="number" tickFormatter={(value: number) => `${value}%`} tick={{ fontSize: 12 }} />
+          <YAxis type="category" dataKey="ticker" width={140} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
+          <ReferenceLine
+            x={benchmark}
+            stroke={LIABILITY_COLOR}
+            strokeDasharray="4 4"
+            label={{ value: "Benchmark", position: "insideTopRight", fontSize: 11 }}
+          />
+          <Bar dataKey="merPct" name="MER" fill={PALETTE[0]} radius={[0, 4, 4, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+      <Text fontSize="xs" color="gray.500" mt={2}>
+        Total annual cost: {formatCad(feeDrag.total_annual_cost_cad)} (the benchmark would cost{" "}
+        {formatCad(feeDrag.total_benchmark_cost_cad)}).
+      </Text>
     </Box>
   );
 }
@@ -417,6 +541,8 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
 
   const [commentary, setCommentary] = useState<CommentaryOut | null>(null);
+  const [netWorthHistory, setNetWorthHistory] = useState<NetWorthHistoryOut | null>(null);
+  const [feeDrag, setFeeDrag] = useState<FeeDragOut | null>(null);
 
   const [drillDownOpen, setDrillDownOpen] = useState(false);
   const [drillDownLoading, setDrillDownLoading] = useState(false);
@@ -451,6 +577,17 @@ export default function Dashboard() {
     void getCommentary()
       .then(setCommentary)
       .catch(() => setCommentary(null));
+  }, []);
+
+  useEffect(() => {
+    // Also independent of `cut` — net-worth history and fee-drag are
+    // portfolio-wide, not tied to the diversification-cut switcher.
+    void getNetWorthHistory()
+      .then(setNetWorthHistory)
+      .catch(() => setNetWorthHistory(null));
+    void getFeeDrag()
+      .then(setFeeDrag)
+      .catch(() => setFeeDrag(null));
   }, []);
 
   const openDrillDown = useCallback(async (selector: SliceSelector) => {
@@ -582,6 +719,11 @@ export default function Dashboard() {
             onSliceClick={(selector) => void openDrillDown(selector)}
           />
         </Box>
+      </SimpleGrid>
+
+      <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={4}>
+        <NetWorthHistoryChart history={netWorthHistory} />
+        <FeeDragChart feeDrag={feeDrag} />
       </SimpleGrid>
 
       <CommentaryCard commentary={commentary?.as_of === data.as_of ? commentary : null} />

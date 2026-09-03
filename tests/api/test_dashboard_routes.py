@@ -25,10 +25,13 @@ client = TestClient(app)
 
 
 class FakeConnection:
-    def __init__(self, *, snapshot_row, term_bucket_rows=(), diversification_rows=()):
+    def __init__(
+        self, *, snapshot_row=None, term_bucket_rows=(), diversification_rows=(), history_rows=()
+    ):
         self.snapshot_row = snapshot_row
         self.term_bucket_rows = list(term_bucket_rows)
         self.diversification_rows = list(diversification_rows)
+        self.history_rows = list(history_rows)
         self.calls: list[tuple] = []
 
     async def fetchrow(self, query, *args):
@@ -41,6 +44,8 @@ class FakeConnection:
             return self.term_bucket_rows
         if "public.diversification_cuts" in query:
             return self.diversification_rows
+        if "public.networth_snapshots" in query:
+            return self.history_rows
         raise AssertionError(f"unexpected query: {query}")
 
 
@@ -152,3 +157,46 @@ def test_get_dashboard_requires_auth():
     response = client.get("/api/dashboard")
 
     assert response.status_code == 401
+
+
+def test_get_networth_history_requires_auth():
+    app.dependency_overrides.pop(get_current_user_id, None)
+
+    response = client.get("/api/dashboard/history")
+
+    assert response.status_code == 401
+
+
+def test_get_networth_history_returns_empty_points_when_no_snapshots_exist():
+    _override_conn(history_rows=[])
+
+    response = client.get("/api/dashboard/history")
+
+    assert response.status_code == 200
+    assert response.json() == {"points": []}
+
+
+def test_get_networth_history_returns_points_oldest_first():
+    _override_conn(
+        history_rows=[
+            {
+                "snapshot_date": date(2026, 6, 30),
+                "total_assets_cad": Decimal("600000.00"),
+                "total_liabilities_cad": Decimal("425000.00"),
+                "net_worth_cad": Decimal("175000.00"),
+            },
+            {
+                "snapshot_date": date(2026, 7, 31),
+                "total_assets_cad": Decimal("618259.00"),
+                "total_liabilities_cad": Decimal("421800.00"),
+                "net_worth_cad": Decimal("196459.00"),
+            },
+        ]
+    )
+
+    response = client.get("/api/dashboard/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [p["snapshot_date"] for p in body["points"]] == ["2026-06-30", "2026-07-31"]
+    assert body["points"][1]["net_worth_cad"] == "196459.00"

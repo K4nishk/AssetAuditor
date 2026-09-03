@@ -67,6 +67,17 @@ class DashboardOut(BaseModel):
     diversification: list[DiversificationSliceOut]
 
 
+class NetWorthPointOut(BaseModel):
+    snapshot_date: date
+    total_assets_cad: Decimal
+    total_liabilities_cad: Decimal
+    net_worth_cad: Decimal
+
+
+class NetWorthHistoryOut(BaseModel):
+    points: list[NetWorthPointOut]
+
+
 @router.get("", response_model=DashboardOut)
 async def get_dashboard(
     cut: str = Query(DEFAULT_CUT),
@@ -107,4 +118,26 @@ async def get_dashboard(
             DiversificationSliceOut(label=row["label"], amount_cad=row["amount_cad"])
             for row in cuts
         ],
+    )
+
+
+@router.get("/history", response_model=NetWorthHistoryOut)
+async def get_networth_history(
+    user_id: str = Depends(get_current_user_id),
+    conn: asyncpg.Connection = Depends(_conn),
+) -> NetWorthHistoryOut:
+    """AA-26's net-worth-over-time line. An empty/single-point list is a
+    normal 200 (not a 404 like `get_dashboard`'s "no snapshot yet") — the
+    frontend renders "not enough history yet" rather than an error state."""
+    rows = await dashboard_queries.list_snapshot_history(conn, user_id=user_id)
+    return NetWorthHistoryOut(
+        points=[
+            NetWorthPointOut(
+                snapshot_date=row["snapshot_date"],
+                total_assets_cad=row["total_assets_cad"],
+                total_liabilities_cad=row["total_liabilities_cad"],
+                net_worth_cad=row["net_worth_cad"],
+            )
+            for row in rows
+        ]
     )
