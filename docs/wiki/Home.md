@@ -10,6 +10,11 @@ Public-facing distillation. Canonical sources live in `docs/vault/` (thinking) a
 - [Data-Contracts](Data-Contracts.md) — silver/gold shapes, lineage, retention
 - [Runbooks](Runbooks.md) — operational procedures
 
+## The showcase
+- `/blog/architecture-story` (public, no login) — the same architecture story below,
+  rendered in-app as MDX with live mermaid diagrams and mock-data-only screenshots
+  (`frontend/src/content/architecture-story.mdx`, mvp.md AA-31).
+
 ## Elsewhere in the repo
 - `ops/README.md` — the operator runbook for the autonomous build and review loops
 - `CLAUDE.md` — binding conventions for every agent (CodeRabbit protocol, branching, hard rules)
