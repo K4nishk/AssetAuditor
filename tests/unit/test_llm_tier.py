@@ -17,6 +17,7 @@ from typing import Any
 import openai
 import pytest
 
+from worker import metrics
 from worker.extract.llm_tier import (
     MODEL_GROUP,
     LlmEndpointNotApprovedError,
@@ -214,6 +215,64 @@ def test_null_account_mask_and_balance_after_are_preserved() -> None:
 
     assert result.drafts[0].payload["account_mask"] is None
     assert result.drafts[0].payload["balance_after"] is None
+
+
+# --- metrics (AA-27) -----------------------------------------------------------
+
+
+def _counter_value(counter, **labels) -> float:
+    return counter.labels(**labels)._value.get()
+
+
+def test_records_a_success_metric_with_the_resolved_backend() -> None:
+    client = FakeClient([_row()])
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="success", backend="groq")
+
+    extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="success", backend="groq") == (
+        before + 1
+    )
+
+
+def test_records_an_error_metric_when_the_request_itself_fails() -> None:
+    client = FakeClient([_row()])
+    client.chat.completions.error = RuntimeError("connection refused")
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="unknown")
+
+    with pytest.raises(RuntimeError):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="unknown") == (
+        before + 1
+    )
+
+
+def test_records_an_error_metric_with_backend_on_a_malformed_response() -> None:
+    client = FakeClient([])
+    client.chat.completions.response = _FakeResponse(choices=[])
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq")
+
+    with pytest.raises(LlmExtractionError):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq") == (
+        before + 1
+    )
+
+
+def test_records_token_usage_when_the_response_reports_it() -> None:
+    @dataclass
+    class _FakeUsage:
+        total_tokens: int
+
+    client = FakeClient([_row()])
+    client.chat.completions.response.usage = _FakeUsage(total_tokens=77)
+    before = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+
+    extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+    assert _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq") == before + 77
 
 
 def test_extraction_backend_reads_groq_prefix() -> None:

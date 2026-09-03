@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 import openai
 
+from worker import metrics
 from worker.adapters.base import (
     AdapterParseError,
     StagedRowDraft,
@@ -250,63 +251,80 @@ def extract_transactions(
     masked_text = mask_statement_text(raw_text, institution_slug)
     active_client = _resolve_client(client)
 
-    response = active_client.chat.completions.create(
-        model=MODEL_GROUP,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": masked_text},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "statement_transactions",
-                "strict": True,
-                "schema": _TRANSACTION_SCHEMA,
-            },
-        },
-    )
-
-    if not response.choices:
-        raise LlmExtractionError("LiteLLM response had no choices")
-
-    message = response.choices[0].message
-    if message is None:
-        raise LlmExtractionError("LiteLLM response choice had no message")
-
-    content = message.content
-    if not content:
-        raise LlmExtractionError("LiteLLM response had no message content")
-
+    response = None
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise LlmExtractionError(
-            f"LiteLLM response was not valid JSON ({len(content)} chars)"
-        ) from exc
-
-    if not isinstance(parsed, dict):
-        raise LlmExtractionError(
-            f"LiteLLM response root was not a JSON object (got {type(parsed).__name__})"
+        response = active_client.chat.completions.create(
+            model=MODEL_GROUP,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": masked_text},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "statement_transactions",
+                    "strict": True,
+                    "schema": _TRANSACTION_SCHEMA,
+                },
+            },
         )
 
-    rows = parsed.get("transactions")
-    if not isinstance(rows, list):
-        raise LlmExtractionError(
-            f"LiteLLM response missing a 'transactions' array (got {type(rows).__name__})"
-        )
-    for index, entry in enumerate(rows):
-        if not isinstance(entry, dict):
+        if not response.choices:
+            raise LlmExtractionError("LiteLLM response had no choices")
+
+        message = response.choices[0].message
+        if message is None:
+            raise LlmExtractionError("LiteLLM response choice had no message")
+
+        content = message.content
+        if not content:
+            raise LlmExtractionError("LiteLLM response had no message content")
+
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
             raise LlmExtractionError(
-                f"LiteLLM 'transactions' array had a non-object entry at index "
-                f"{index} (got {type(entry).__name__})"
+                f"LiteLLM response was not valid JSON ({len(content)} chars)"
+            ) from exc
+
+        if not isinstance(parsed, dict):
+            raise LlmExtractionError(
+                f"LiteLLM response root was not a JSON object (got {type(parsed).__name__})"
             )
 
-    drafts = [
-        _to_draft(row, institution_slug=institution_slug, account_mask_override=account_mask)
-        for row in rows
-    ]
-    return LlmExtractionResult(drafts=drafts, extraction_backend=_extraction_backend(response))
+        rows = parsed.get("transactions")
+        if not isinstance(rows, list):
+            raise LlmExtractionError(
+                f"LiteLLM response missing a 'transactions' array (got {type(rows).__name__})"
+            )
+        for index, entry in enumerate(rows):
+            if not isinstance(entry, dict):
+                raise LlmExtractionError(
+                    f"LiteLLM 'transactions' array had a non-object entry at index "
+                    f"{index} (got {type(entry).__name__})"
+                )
+
+        drafts = [
+            _to_draft(row, institution_slug=institution_slug, account_mask_override=account_mask)
+            for row in rows
+        ]
+    except Exception:
+        # `response` is only `None` if the request call itself failed
+        # (network/auth/rate-limit) — anything after that knows which
+        # backend LiteLLM routed to even though the request ultimately
+        # failed (e.g. a malformed-response LlmExtractionError).
+        metrics.record_llm_request(
+            outcome="error",
+            backend=_extraction_backend(response) if response is not None else "unknown",
+        )
+        raise
+
+    backend = _extraction_backend(response)
+    metrics.record_llm_request(outcome="success", backend=backend)
+    metrics.record_llm_tokens_from_response(response, backend=backend)
+
+    return LlmExtractionResult(drafts=drafts, extraction_backend=backend)
 
 
 def _validate_confidence(name: str, value: Any) -> float:

@@ -40,6 +40,7 @@ from app.domain.audit_commentary import (
     filter_advice_shaped,
     render_facts_for_prompt,
 )
+from worker import metrics
 from worker.lineage import LineageEmitter
 
 logger = logging.getLogger("worker.commentary")
@@ -163,55 +164,65 @@ def request_commentary(
     persisted or shown."""
     active_client = _resolve_client(client)
 
-    response = active_client.chat.completions.create(
-        model=MODEL_GROUP,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": facts_text},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "audit_commentary",
-                "strict": True,
-                "schema": _COMMENTARY_SCHEMA,
-            },
-        },
-    )
-
-    if not response.choices:
-        raise AuditCommentaryError("LiteLLM response had no choices")
-
-    message = response.choices[0].message
-    if message is None:
-        raise AuditCommentaryError("LiteLLM response choice had no message")
-
-    content = message.content
-    if not content:
-        raise AuditCommentaryError("LiteLLM response had no message content")
-
+    response = None
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise AuditCommentaryError(
-            f"LiteLLM response was not valid JSON ({len(content)} chars)"
-        ) from exc
-
-    if not isinstance(parsed, dict):
-        raise AuditCommentaryError(
-            f"LiteLLM response root was not a JSON object (got {type(parsed).__name__})"
+        response = active_client.chat.completions.create(
+            model=MODEL_GROUP,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": facts_text},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "audit_commentary",
+                    "strict": True,
+                    "schema": _COMMENTARY_SCHEMA,
+                },
+            },
         )
 
-    observations = parsed.get("observations")
-    if not isinstance(observations, list) or not all(
-        isinstance(entry, str) for entry in observations
-    ):
-        raise AuditCommentaryError("LiteLLM response missing a string 'observations' array")
+        if not response.choices:
+            raise AuditCommentaryError("LiteLLM response had no choices")
 
-    return CommentaryLlmResult(
-        observations=observations, backend=_extraction_backend(response)
-    )
+        message = response.choices[0].message
+        if message is None:
+            raise AuditCommentaryError("LiteLLM response choice had no message")
+
+        content = message.content
+        if not content:
+            raise AuditCommentaryError("LiteLLM response had no message content")
+
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise AuditCommentaryError(
+                f"LiteLLM response was not valid JSON ({len(content)} chars)"
+            ) from exc
+
+        if not isinstance(parsed, dict):
+            raise AuditCommentaryError(
+                f"LiteLLM response root was not a JSON object (got {type(parsed).__name__})"
+            )
+
+        observations = parsed.get("observations")
+        if not isinstance(observations, list) or not all(
+            isinstance(entry, str) for entry in observations
+        ):
+            raise AuditCommentaryError("LiteLLM response missing a string 'observations' array")
+    except Exception:
+        metrics.record_llm_request(
+            outcome="error",
+            backend=_extraction_backend(response) if response is not None else "unknown",
+        )
+        raise
+
+    backend = _extraction_backend(response)
+    metrics.record_llm_request(outcome="success", backend=backend)
+    metrics.record_llm_tokens_from_response(response, backend=backend)
+
+    return CommentaryLlmResult(observations=observations, backend=backend)
 
 
 def _diversification_slices(rows: list[asyncpg.Record]) -> list[DiversificationSlice]:

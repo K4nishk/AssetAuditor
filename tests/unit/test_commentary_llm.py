@@ -13,6 +13,7 @@ from typing import Any
 import openai
 import pytest
 
+from worker import metrics
 from worker.commentary import (
     MODEL_GROUP,
     AuditCommentaryError,
@@ -50,10 +51,13 @@ class _FakeResponse:
 @dataclass
 class _FakeCompletions:
     response: _FakeResponse | None = None
+    error: Exception | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     def create(self, **kwargs: Any) -> _FakeResponse:
         self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
         assert self.response is not None
         return self.response
 
@@ -190,3 +194,47 @@ def test_injected_client_without_a_base_url_is_rejected():
     del double.base_url
     with pytest.raises(LlmEndpointNotApprovedError):
         request_commentary(FACTS_TEXT, client=double)
+
+
+# --- metrics (AA-27) -----------------------------------------------------------
+
+
+def _counter_value(counter, **labels) -> float:
+    return counter.labels(**labels)._value.get()
+
+
+def test_records_a_success_metric_with_the_resolved_backend():
+    client = FakeClient(["obs"])
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="success", backend="groq")
+
+    request_commentary(FACTS_TEXT, client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="success", backend="groq") == (
+        before + 1
+    )
+
+
+def test_records_an_error_metric_when_the_request_itself_fails():
+    client = FakeClient(["obs"])
+    client.chat.completions.error = RuntimeError("connection refused")
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="unknown")
+
+    with pytest.raises(RuntimeError):
+        request_commentary(FACTS_TEXT, client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="unknown") == (
+        before + 1
+    )
+
+
+def test_records_an_error_metric_with_backend_on_a_malformed_response():
+    client = FakeClient([])
+    client.chat.completions.response.choices[0].message.content = "not json"
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq")
+
+    with pytest.raises(AuditCommentaryError):
+        request_commentary(FACTS_TEXT, client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq") == (
+        before + 1
+    )

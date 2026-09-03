@@ -1,0 +1,62 @@
+# ETL failure rate alert (AA-27) — Grafana unified-alerting provisioning
+# file (apiVersion 1: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/).
+#
+# Reads `etl_jobs_total{status,institution}`, emitted by
+# `worker.queue.release_job` (worker/queue.py) and scraped off the worker's
+# `/metrics` endpoint by Grafana Alloy (worker/observability/alloy-config.alloy)
+# — see docs/vault/30-architecture/Observability.md's metric set.
+#
+# NaN-safe by construction: with zero job throughput in the window, both A and
+# B evaluate to 0/0 = NaN, and Grafana/Prometheus treat a NaN threshold
+# comparison as not-firing rather than an error — an idle worker (or one that
+# hasn't been wired into the job dispatch pipeline yet, see CONTRACT_OUT.md)
+# never falsely pages.
+#
+# Unverified: no Grafana Cloud account/credentials exist in this sandbox;
+# this file has never been applied to a real Grafana instance.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: etl-pipeline
+    folder: AssetAuditor
+    interval: 5m
+    rules:
+      - uid: etl-failure-rate
+        title: ETL job failure rate elevated
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: grafanacloud-prom
+            model:
+              expr: sum(rate(etl_jobs_total{status="failed"}[15m]))
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: grafanacloud-prom
+            model:
+              expr: sum(rate(etl_jobs_total{status=~"done|failed"}[15m]))
+              refId: B
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: math
+              # 20% of processed jobs failing in the trailing 15m window.
+              expression: "($A / $B) > 0.2"
+              refId: C
+        for: 15m
+        labels:
+          severity: warning
+          area: etl-pipeline
+        annotations:
+          summary: >-
+            More than 20% of etl_jobs completed in the last 15m ended
+            'failed' — check worker logs and recent lineage_events FAIL
+            rows for the failing run_ids (AA-23's drill-down panel can trace
+            a specific job back to its source file).

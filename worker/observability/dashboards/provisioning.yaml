@@ -1,0 +1,29 @@
+# Grafana dashboard file-provisioning config (AA-27):
+# https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+#
+# Points Grafana at this directory so `assetauditor-overview.json` loads on
+# startup without a manual import — same file-provisioning convention the
+# alert rule YAMLs in this directory already use for apiVersion-1 alerting
+# resources. This file itself goes in Grafana's own provisioning config path
+# (`/etc/grafana/provisioning/dashboards/assetauditor.yaml` for a self-hosted
+# instance); Grafana Cloud's hosted stack has no filesystem to provision from
+# in this way, so `assetauditor-overview.json` would instead be imported by
+# hand (Dashboards → New → Import) or via Grafana Cloud's Terraform provider —
+# this file documents the self-hosted path CLAUDE.md's zero-cost contract
+# doesn't otherwise require you to give up.
+#
+# Unverified: no Grafana instance (cloud or self-hosted) exists in this
+# sandbox to apply this against.
+
+apiVersion: 1
+
+providers:
+  - name: assetauditor
+    orgId: 1
+    folder: AssetAuditor
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/assetauditor
+      foldersFromFilesStructure: false

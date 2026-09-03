@@ -1,10 +1,11 @@
 # Home-lab GPU box compose stack (ADR v1.1.0 §2) — worker · litellm · vllm
-# (--profile gpu, promoted in AA-33). Outbound-only: nothing here publishes a
-# port to the internet; the worker polls Supabase, it is never polled.
-# Bring-up steps: worker/bring-up.md. The worker's `/metrics` endpoint
-# (worker/metrics.py, AA-34) is `expose`d on the compose network only, same
-# non-published convention as `litellm` below; Grafana Alloy actually
-# scraping it is added by AA-27.
+# (--profile gpu, promoted in AA-33) · alloy (AA-27). Outbound-only: nothing
+# here publishes a port to the internet; the worker polls Supabase, it is
+# never polled. Bring-up steps: worker/bring-up.md. The worker's `/metrics`
+# endpoint (worker/metrics.py, AA-34) is `expose`d on the compose network
+# only, same non-published convention as `litellm` below; `alloy` is what
+# actually scrapes it and every sibling `/metrics` endpoint into Grafana
+# Cloud (worker/observability/alloy-config.alloy).
 
 services:
   worker:
@@ -54,3 +55,20 @@ services:
             - driver: nvidia
               count: all
               capabilities: ["gpu"]
+
+  alloy:
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    # Outbound-only, same convention as `worker` above: no `ports:` mapping,
+    # this container never accepts an inbound connection from anywhere but
+    # its own scrape targets on the compose network.
+    volumes:
+      - ../worker/observability/alloy-config.alloy:/etc/alloy/config.alloy:ro
+    environment:
+      GRAFANA_CLOUD_PROMETHEUS_URL: ${GRAFANA_CLOUD_PROMETHEUS_URL}
+      GRAFANA_CLOUD_PROMETHEUS_USER: ${GRAFANA_CLOUD_PROMETHEUS_USER}
+      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY}
+    command: ["run", "/etc/alloy/config.alloy"]
+    depends_on:
+      - worker
+      - litellm

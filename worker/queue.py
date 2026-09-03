@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncpg
 
+from worker import metrics
+
 # The CTE, rather than `UPDATE ... WHERE id = (SELECT ... LIMIT 1)`, is the
 # standard-library-recommended shape for this: `FOR UPDATE SKIP LOCKED` has to
 # run on a plain SELECT (an UPDATE's own row lock isn't skippable the same
@@ -38,7 +40,10 @@ _RELEASE_JOB_SQL = """
     update public.etl_jobs
     set status = $4, error = $5
     where id = $1 and claimed_by = $2 and status = $3
-    returning id, status, error
+    returning id, status, error,
+              extract(epoch from (now() - claimed_at))::float8 as duration_seconds,
+              (select institution from public.bronze_files
+               where id = etl_jobs.bronze_file_id) as institution
 """
 
 # Cross-user by design, same as the claim query above — feeds the
@@ -90,6 +95,14 @@ async def release_job(
 
     Extraction itself (parsing bytes, writing staged rows) is AA-14/15/16's
     job; this only records the outcome those issues arrive at.
+
+    Every successful transition feeds `worker.metrics.etl_jobs_total`; only a
+    terminal one (done/failed) also feeds `etl_job_duration_seconds` (AA-27) —
+    a claimed->parsing or parsing->needs_user hop isn't the job finishing, so
+    counting its elapsed-since-claimed time would understate real job
+    durations and skew the histogram. Instrumenting here, rather than at
+    whatever future call site claims/dispatches jobs, means every caller of
+    this primitive is counted without having to remember to do it itself.
     """
     if expected_status not in _VALID_STATUSES:
         raise ValueError(f"invalid etl_jobs status: {expected_status!r}")
@@ -97,4 +110,11 @@ async def release_job(
         raise ValueError(f"invalid etl_jobs status: {status!r}")
     if status not in _ALLOWED_TRANSITIONS.get(expected_status, frozenset()):
         raise ValueError(f"invalid etl_jobs transition: {expected_status!r} -> {status!r}")
-    return await conn.fetchrow(_RELEASE_JOB_SQL, job_id, claimed_by, expected_status, status, error)
+    row = await conn.fetchrow(_RELEASE_JOB_SQL, job_id, claimed_by, expected_status, status, error)
+    if row is not None:
+        metrics.record_etl_job_outcome(status=row["status"], institution=row.get("institution"))
+        if row["status"] in {"done", "failed"}:
+            duration_seconds = row.get("duration_seconds")
+            if duration_seconds is not None:
+                metrics.record_etl_job_duration(duration_seconds)
+    return row
