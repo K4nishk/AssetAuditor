@@ -220,10 +220,7 @@ def request_commentary(
 
     backend = _extraction_backend(response)
     metrics.record_llm_request(outcome="success", backend=backend)
-    usage = getattr(response, "usage", None)
-    total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
-    if total_tokens is not None:
-        metrics.record_llm_tokens(backend=backend, count=total_tokens)
+    metrics.record_llm_tokens_from_response(response, backend=backend)
 
     return CommentaryLlmResult(observations=observations, backend=backend)
 

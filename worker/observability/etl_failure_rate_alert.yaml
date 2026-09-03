@@ -41,7 +41,7 @@ groups:
               to: 0
             datasourceUid: grafanacloud-prom
             model:
-              expr: sum(rate(etl_jobs_total[15m]))
+              expr: sum(rate(etl_jobs_total{status=~"done|failed"}[15m]))
               refId: B
           - refId: C
             datasourceUid: "__expr__"
@@ -56,7 +56,7 @@ groups:
           area: etl-pipeline
         annotations:
           summary: >-
-            More than 20% of etl_jobs transitions in the last 15m were
+            More than 20% of etl_jobs completed in the last 15m ended
             'failed' — check worker logs and recent lineage_events FAIL
             rows for the failing run_ids (AA-23's drill-down panel can trace
             a specific job back to its source file).

@@ -168,7 +168,7 @@ def _urllib_transport(url: str, body: bytes, headers: dict[str, str]) -> None:
         with urllib.request.urlopen(request, timeout=5) as response:
             if response.status >= 300:
                 raise RemoteWriteError(f"remote_write endpoint returned HTTP {response.status}")
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError) as exc:
         raise RemoteWriteError(f"remote_write request failed: {exc}") from exc
 
 
@@ -216,7 +216,7 @@ def push_samples(
     }
     try:
         transport(config.url, compressed, headers)
-    except RemoteWriteError:
+    except Exception:
         logger.warning("remote_write push failed", exc_info=True)
 
 

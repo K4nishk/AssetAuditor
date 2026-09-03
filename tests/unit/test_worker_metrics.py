@@ -101,3 +101,42 @@ def test_record_llm_tokens_increments_the_labeled_counter_by_count():
 
     after = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
     assert after == before + 123
+
+
+class _FakeUsage:
+    def __init__(self, total_tokens):
+        self.total_tokens = total_tokens
+
+
+class _FakeResponse:
+    def __init__(self, usage=None):
+        self.usage = usage
+
+
+def test_record_llm_tokens_from_response_coerces_a_numeric_string():
+    before = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+
+    metrics.record_llm_tokens_from_response(_FakeResponse(_FakeUsage("77")), backend="groq")
+
+    after = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+    assert after == before + 77
+
+
+def test_record_llm_tokens_from_response_skips_a_non_numeric_total_tokens():
+    before = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+
+    metrics.record_llm_tokens_from_response(
+        _FakeResponse(_FakeUsage("not-a-number")), backend="groq"
+    )
+
+    after = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+    assert after == before
+
+
+def test_record_llm_tokens_from_response_skips_when_usage_is_missing():
+    before = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+
+    metrics.record_llm_tokens_from_response(_FakeResponse(usage=None), backend="groq")
+
+    after = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
+    assert after == before

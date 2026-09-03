@@ -37,9 +37,13 @@ the job loop yet), so these counters are live now, not just wired-ahead.
 
 from __future__ import annotations
 
+import logging
 import time
+from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
+
+logger = logging.getLogger("worker.metrics")
 
 DEFAULT_METRICS_PORT = 9100
 
@@ -111,6 +115,25 @@ def record_llm_request(*, outcome: str, backend: str) -> None:
 
 def record_llm_tokens(*, backend: str, count: int) -> None:
     LLM_TOKENS_TOTAL.labels(backend=backend).inc(count)
+
+
+def record_llm_tokens_from_response(response: Any, *, backend: str) -> None:
+    """Best-effort `llm_tokens_total` recording from a chat-completion
+    response's `usage.total_tokens`. Shared by `worker.extract.llm_tier` and
+    `worker.commentary` (both call this rather than `record_llm_tokens`
+    directly) so a provider returning a missing or non-numeric token count
+    is skipped — logged, not raised — instead of failing an otherwise
+    successful extraction/commentary call."""
+    usage = getattr(response, "usage", None)
+    total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+    if total_tokens is None:
+        return
+    try:
+        count = int(total_tokens)
+    except (TypeError, ValueError):
+        logger.warning("llm usage.total_tokens was not numeric: %r", total_tokens)
+        return
+    record_llm_tokens(backend=backend, count=count)
 
 
 def start_metrics_server(port: int = DEFAULT_METRICS_PORT) -> None:

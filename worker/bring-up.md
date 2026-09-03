@@ -87,14 +87,14 @@ Once metrics are landing in Grafana Cloud:
   (Dashboards → New → Import) — `worker/observability/dashboards/provisioning.yaml`
   documents the self-hosted file-provisioning path, but Grafana Cloud's hosted
   stack has no filesystem to provision from.
-- Apply the three alert rule files under `worker/observability/` (`stale_while_queued_alert.yaml`,
-  `retention_sweeper_stale_alert.yaml`, `etl_failure_rate_alert.yaml`,
-  `llm_error_rate_alert.yaml` — four files, three alerts per mvp.md's AA-27
-  line since sweeper-stale was already defined by AA-19) via Grafana's
-  alerting file-provisioning path, or paste each rule into Alerting → New
-  alert rule by hand on the free tier. Every rule references datasource uid
-  `grafanacloud-prom` — check the actual uid Grafana Cloud assigns your
-  Prometheus data source and adjust if it differs.
+- Apply the four alert rule files under `worker/observability/`
+  (`stale_while_queued_alert.yaml`, `retention_sweeper_stale_alert.yaml`,
+  `etl_failure_rate_alert.yaml`, `llm_error_rate_alert.yaml` — four files, but
+  three alerts per mvp.md's AA-27 line, since sweeper-stale was already
+  defined by AA-19) via Grafana's alerting file-provisioning path, or paste
+  each rule into Alerting → New alert rule by hand on the free tier. Every
+  rule references datasource uid `grafanacloud-prom` — check the actual uid
+  Grafana Cloud assigns your Prometheus data source and adjust if it differs.
 - Alerts need a contact point (email/Slack/etc.) wired up before they can
   notify anyone — that's an owner decision (whose inbox, which channel) that
   no sandbox can make on your behalf, so none is configured here.

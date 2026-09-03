@@ -96,8 +96,11 @@ async def release_job(
     Extraction itself (parsing bytes, writing staged rows) is AA-14/15/16's
     job; this only records the outcome those issues arrive at.
 
-    Every successful transition also feeds `worker.metrics.etl_jobs_total`/
-    `etl_job_duration_seconds` (AA-27) — instrumenting here, rather than at
+    Every successful transition feeds `worker.metrics.etl_jobs_total`; only a
+    terminal one (done/failed) also feeds `etl_job_duration_seconds` (AA-27) —
+    a claimed->parsing or parsing->needs_user hop isn't the job finishing, so
+    counting its elapsed-since-claimed time would understate real job
+    durations and skew the histogram. Instrumenting here, rather than at
     whatever future call site claims/dispatches jobs, means every caller of
     this primitive is counted without having to remember to do it itself.
     """
@@ -110,7 +113,8 @@ async def release_job(
     row = await conn.fetchrow(_RELEASE_JOB_SQL, job_id, claimed_by, expected_status, status, error)
     if row is not None:
         metrics.record_etl_job_outcome(status=row["status"], institution=row.get("institution"))
-        duration_seconds = row.get("duration_seconds")
-        if duration_seconds is not None:
-            metrics.record_etl_job_duration(duration_seconds)
+        if row["status"] in {"done", "failed"}:
+            duration_seconds = row.get("duration_seconds")
+            if duration_seconds is not None:
+                metrics.record_etl_job_duration(duration_seconds)
     return row
