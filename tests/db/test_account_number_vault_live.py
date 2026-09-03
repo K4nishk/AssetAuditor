@@ -207,7 +207,7 @@ async def test_store_rejects_an_account_id_owned_by_another_user(pg_cluster, see
         await admin.execute("insert into auth.users (id) values ($1)", other_user_id)
         conn = await _authenticated_conn_as(pg_cluster, seeded_db["dbname"], other_user_id)
         try:
-            with pytest.raises(asyncpg.RaiseException, match="not found for the current user"):
+            with pytest.raises(asyncpg.RaiseError, match="not found for the current user"):
                 await conn.execute(
                     "select public.vault_store_account_number($1, $2)",
                     seeded_db["account_id"],
@@ -239,7 +239,7 @@ async def test_store_is_denied_after_the_user_is_deactivated(pg_cluster, seeded_
             seeded_db["user_id"],
         )
 
-        with pytest.raises(asyncpg.RaiseException, match="not found for the current user"):
+        with pytest.raises(asyncpg.RaiseError, match="not found for the current user"):
             await conn.execute(
                 "select public.vault_store_account_number($1, $2)",
                 seeded_db["account_id"],
