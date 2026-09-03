@@ -22,6 +22,7 @@ from app.db.queries.silver import SilverResolutionError, write_confirmed_rows
 
 MIGRATION_SQL = Path("app/db/migrations/0001_init.sql").read_text()
 MIGRATION_SQL_LOCAL = MIGRATION_SQL.replace("create extension if not exists pgsodium;\n", "")
+MIGRATION_0003_SQL = Path("app/db/migrations/0003_holdings_fee_drag.sql").read_text()
 
 AUTH_STUB_SQL = """
 create schema auth;
@@ -46,6 +47,7 @@ async def seeded_db(pg_cluster, scratch_database):
     try:
         await admin.execute(AUTH_STUB_SQL)
         await admin.execute(MIGRATION_SQL_LOCAL)
+        await admin.execute(MIGRATION_0003_SQL)
 
         user_id = uuid.uuid4()
         await admin.execute("insert into auth.users (id) values ($1)", user_id)

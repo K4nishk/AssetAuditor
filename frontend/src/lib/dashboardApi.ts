@@ -29,7 +29,22 @@ export interface DashboardOut {
   diversification: DiversificationSlice[];
 }
 
+export interface NetWorthPoint {
+  snapshot_date: string;
+  total_assets_cad: string;
+  total_liabilities_cad: string;
+  net_worth_cad: string;
+}
+
+export interface NetWorthHistoryOut {
+  points: NetWorthPoint[];
+}
+
 export function getDashboard(cut?: DiversificationCut): Promise<DashboardOut> {
   const query = cut ? `?cut=${encodeURIComponent(cut)}` : "";
   return apiFetch<DashboardOut>(`/dashboard${query}`);
+}
+
+export function getNetWorthHistory(): Promise<NetWorthHistoryOut> {
+  return apiFetch<NetWorthHistoryOut>("/dashboard/history");
 }

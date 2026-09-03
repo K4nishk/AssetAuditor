@@ -31,6 +31,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useCallback, useEffect, useState } from "react";
+import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts";
 
 import { ApiError } from "../lib/api";
 import {
@@ -62,26 +63,102 @@ const KIND_LABELS: Record<string, string> = {
   cra_override: "CRA override",
 };
 
+// Room gauges (mvp.md AA-26): a quick visual read of how much of a room is
+// used, alongside the exact dollar figures the StatGroup below already
+// shows. Blue is the same primary series color the dashboard's charts use;
+// red is reserved for an over-contribution (`room_used > room_total`, which
+// the ledger can produce if a `cra_override` reconciles below what was
+// already contributed) — same reserved-for-liability-shaped-things
+// convention `frontend/src/routes/Dashboard.tsx`'s `LIABILITY_COLOR` sets.
+const GAUGE_COLOR = "#2a78d6";
+const GAUGE_OVER_COLOR = "#e34948";
+
+// `null` when `room_total` is 0 (e.g. an FHSA never opened yet) — not a
+// meaningful percentage to draw an arc for.
+function percentUsed(breakdown: RoomBreakdown): number | null {
+  const total = Number(breakdown.room_total);
+  if (total <= 0) return null;
+  return (Number(breakdown.room_used) / total) * 100;
+}
+
+function RoomGauge({ breakdown }: { breakdown: RoomBreakdown }) {
+  const percent = percentUsed(breakdown);
+
+  if (percent === null) {
+    return (
+      <Center width="110px" height="110px" borderWidth="1px" borderRadius="full" flexShrink={0}>
+        <Text fontSize="xs" color="gray.500">
+          N/A
+        </Text>
+      </Center>
+    );
+  }
+
+  // The arc itself clamps to [0, 100] — an over-contribution still draws a
+  // full ring rather than an out-of-range arc — but the label shows the real
+  // (unclamped) percent so an over-contribution stays visible.
+  const clamped = Math.min(100, Math.max(0, percent));
+  const isOver = percent > 100;
+
+  return (
+    <Box position="relative" width="110px" height="110px" flexShrink={0}>
+      <RadialBarChart
+        width={110}
+        height={110}
+        cx="50%"
+        cy="50%"
+        innerRadius="75%"
+        outerRadius="100%"
+        barSize={10}
+        data={[{ value: clamped }]}
+        startAngle={90}
+        endAngle={-270}
+      >
+        <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
+        <RadialBar
+          background
+          dataKey="value"
+          cornerRadius={6}
+          fill={isOver ? GAUGE_OVER_COLOR : GAUGE_COLOR}
+        />
+      </RadialBarChart>
+      <Center position="absolute" inset={0} flexDirection="column">
+        <Text fontSize="sm" fontWeight="bold">
+          {percent.toFixed(0)}%
+        </Text>
+        {isOver && (
+          <Text fontSize="10px" color={GAUGE_OVER_COLOR}>
+            over
+          </Text>
+        )}
+      </Center>
+    </Box>
+  );
+}
+
 function RoomCard({ accountType, breakdown }: { accountType: AccountType; breakdown: RoomBreakdown }) {
   return (
     <Box borderWidth="1px" borderRadius="md" p={4}>
       <Heading size="sm" mb={3}>
         {ACCOUNT_LABELS[accountType]}
       </Heading>
-      <StatGroup mb={3}>
-        <Stat>
-          <StatLabel>Total room</StatLabel>
-          <StatNumber fontSize="lg">${breakdown.room_total}</StatNumber>
-        </Stat>
-        <Stat>
-          <StatLabel>Used</StatLabel>
-          <StatNumber fontSize="lg">${breakdown.room_used}</StatNumber>
-        </Stat>
-        <Stat>
-          <StatLabel>Remaining</StatLabel>
-          <StatNumber fontSize="lg">${breakdown.room_remaining}</StatNumber>
-        </Stat>
-      </StatGroup>
+      <HStack align="center" spacing={4} mb={3}>
+        <RoomGauge breakdown={breakdown} />
+        <StatGroup flex={1}>
+          <Stat>
+            <StatLabel>Total room</StatLabel>
+            <StatNumber fontSize="lg">${breakdown.room_total}</StatNumber>
+          </Stat>
+          <Stat>
+            <StatLabel>Used</StatLabel>
+            <StatNumber fontSize="lg">${breakdown.room_used}</StatNumber>
+          </Stat>
+          <Stat>
+            <StatLabel>Remaining</StatLabel>
+            <StatNumber fontSize="lg">${breakdown.room_remaining}</StatNumber>
+          </Stat>
+        </StatGroup>
+      </HStack>
 
       <Accordion allowToggle>
         <AccordionItem border="none">

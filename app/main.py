@@ -13,6 +13,7 @@ from app.routes.account import router as account_router
 from app.routes.commentary import router as commentary_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.diversification import router as diversification_router
+from app.routes.fees import router as fees_router
 from app.routes.lineage import router as lineage_router
 from app.routes.manual_entry import router as manual_entry_router
 from app.routes.profile import router as profile_router
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(account_router)
     app.include_router(dashboard_router)
     app.include_router(diversification_router)
+    app.include_router(fees_router)
     app.include_router(lineage_router)
     app.include_router(commentary_router)
 

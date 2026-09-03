@@ -35,9 +35,25 @@ _DIVERSIFICATION_CUTS_SQL = """
     order by amount_cad desc
 """
 
+_SNAPSHOT_HISTORY_SQL = """
+    select snapshot_date, total_assets_cad, total_liabilities_cad, net_worth_cad
+    from public.networth_snapshots
+    where user_id = $1 and deactivated_at is null
+    order by snapshot_date asc
+"""
+
 
 async def get_latest_snapshot(conn: asyncpg.Connection, *, user_id: str) -> asyncpg.Record | None:
     return await conn.fetchrow(_LATEST_SNAPSHOT_SQL, user_id)
+
+
+async def list_snapshot_history(conn: asyncpg.Connection, *, user_id: str) -> list[asyncpg.Record]:
+    """Every non-purged snapshot this user has, oldest first — AA-26's
+    net-worth-over-time line. `worker.gold.rebuild_gold` is still not wired
+    into a recurring caller (AA-18/AA-22's own docstrings), so today this is
+    typically zero or one row; the frontend renders that as "not enough
+    history yet" rather than treating it as an error."""
+    return await conn.fetch(_SNAPSHOT_HISTORY_SQL, user_id)
 
 
 async def list_term_buckets(
@@ -52,4 +68,9 @@ async def list_diversification_cuts(
     return await conn.fetch(_DIVERSIFICATION_CUTS_SQL, user_id, snapshot_date, cut)
 
 
-__all__ = ["get_latest_snapshot", "list_term_buckets", "list_diversification_cuts"]
+__all__ = [
+    "get_latest_snapshot",
+    "list_term_buckets",
+    "list_diversification_cuts",
+    "list_snapshot_history",
+]
