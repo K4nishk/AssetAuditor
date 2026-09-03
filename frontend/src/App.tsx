@@ -69,6 +69,7 @@ function AuthenticatedShell({
 // onboarding form (wireframe v1 screen 1) instead until one is saved. Also
 // doubles as the "edit profile" screen — same form, pre-filled.
 function Home() {
+  const { signOut } = useAuth();
   const [profile, setProfile] = useState<ProfileOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -105,7 +106,15 @@ function Home() {
   if (error) {
     return (
       <Center h="100vh">
-        <Text color="red.500">{error}</Text>
+        <VStack spacing={3}>
+          <Text color="red.500">{error}</Text>
+          <Button size="sm" onClick={() => void load()}>
+            Try again
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void signOut()}>
+            Log out
+          </Button>
+        </VStack>
       </Center>
     );
   }
@@ -133,6 +142,7 @@ function Home() {
 function RoomsRoute() {
   const [profile, setProfile] = useState<ProfileOut | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,8 +150,17 @@ function RoomsRoute() {
       .then((loaded) => {
         if (!cancelled) setProfile(loaded);
       })
-      .catch(() => {
-        if (!cancelled) setProfile(null);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Only a 404 (no profile yet) means "genuinely ineligible" — any other
+        // failure (network blip, expired session) is transient and must not be
+        // read as "not eligible for rooms", which silently bounced the user to
+        // `/` and threw away the reason why.
+        if (err instanceof ApiError && err.status === 404) {
+          setProfile(null);
+        } else {
+          setError(err instanceof ApiError ? err.message : "failed to load profile");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -155,6 +174,14 @@ function RoomsRoute() {
     return (
       <Center h="100vh">
         <Spinner />
+      </Center>
+    );
+  }
+
+  if (error) {
+    return (
+      <Center h="100vh">
+        <Text color="red.500">{error}</Text>
       </Center>
     );
   }

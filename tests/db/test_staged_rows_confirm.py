@@ -32,11 +32,24 @@ create table auth.users (
     email text
 );
 
+create function auth.uid() returns uuid
+language sql stable
+as $$
+    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
 grant usage on schema auth to authenticated;
+grant execute on function auth.uid() to authenticated;
 grant usage on schema public to authenticated;
 """
 
 pytestmark = pytest.mark.asyncio
+
+
+async def _authenticated_conn(pg_cluster, dbname):
+    return await asyncpg.connect(
+        host=pg_cluster["socket_dir"], user="authenticated", database=dbname
+    )
 
 
 @pytest_asyncio.fixture
@@ -74,7 +87,12 @@ async def seeded_db(pg_cluster, scratch_database):
             bronze_id,
         )
 
-        yield {"conn": admin, "user_id": str(user_id), "job_id": str(job_id)}
+        yield {
+            "conn": admin,
+            "dbname": scratch_database,
+            "user_id": str(user_id),
+            "job_id": str(job_id),
+        }
     finally:
         await admin.close()
 
@@ -143,6 +161,48 @@ async def test_update_row_payload_is_a_noop_once_confirmed(seeded_db):
     )
 
     assert updated is None
+
+
+# --- RLS tenant boundary --------------------------------------------------------
+
+
+async def test_list_rows_for_job_is_scoped_by_rls_not_just_its_where_clause(
+    pg_cluster, seeded_db
+):
+    """`list_rows_for_job`'s SQL filters by `user_id` in its WHERE clause, but
+    per the module docstring that's app-level trust in the caller's argument —
+    Postgres's RLS policy (migration 0001) is what actually enforces the tenant
+    boundary. Prove it the same way tests/db/test_migration_0001_rls.py does:
+    call the real query function under an RLS-scoped `authenticated` connection
+    impersonating a *different* user than the one whose id is passed in. Even a
+    caller bug that hands this function the victim's own user_id/job_id must
+    still come back empty.
+    """
+    admin = seeded_db["conn"]
+    victim_row = await _stage(seeded_db, "account", {"masked_identifier": "questrade-...9999"})
+
+    attacker_id = uuid.uuid4()
+    await admin.execute("insert into auth.users (id) values ($1)", attacker_id)
+
+    attacker_conn = await _authenticated_conn(pg_cluster, seeded_db["dbname"])
+    try:
+        async with attacker_conn.transaction():
+            await attacker_conn.execute(
+                "select set_config('request.jwt.claim.sub', $1, true)", str(attacker_id)
+            )
+            rows = await staged_rows.list_rows_for_job(
+                attacker_conn, user_id=seeded_db["user_id"], job_id=seeded_db["job_id"]
+            )
+            assert rows == []
+    finally:
+        await attacker_conn.close()
+
+    # Sanity check: RLS is scoping the read, not eating every row outright —
+    # the row is genuinely there and visible to its own user.
+    rows_for_owner = await staged_rows.list_rows_for_job(
+        admin, user_id=seeded_db["user_id"], job_id=seeded_db["job_id"]
+    )
+    assert [r["id"] for r in rows_for_owner] == [victim_row["id"]]
 
 
 # --- confirm -> silver ---------------------------------------------------------

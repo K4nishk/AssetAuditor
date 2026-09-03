@@ -141,7 +141,14 @@ async def write_confirmed_rows(
         mask = _require(payload, "account_mask", entity="transaction")
         account_id = _resolve_account(account_by_mask, mask, entity="transaction")
         ticker = payload.get("ticker")
-        holding_id = holding_by_key.get((mask, ticker)) if ticker else None
+        holding_id = None
+        if ticker:
+            holding_id = holding_by_key.get((mask, ticker))
+            if holding_id is None:
+                raise SilverResolutionError(
+                    f"transaction for account_mask={mask!r} ticker={ticker!r} has no "
+                    "matching confirmed holding in this batch"
+                )
         await conn.execute(
             _INSERT_TRANSACTION_SQL,
             user_id,
