@@ -130,9 +130,11 @@ def render_facts_for_prompt(facts: GoldFactsSnapshot) -> str:
 
 # Word-boundary patterns for imperative/advisory language: directives
 # ("you should", "consider selling"), first-person recommendation framing,
-# and the specific verbs a buy/sell/rebalance suggestion would use. Deliberately
-# broad — a false-positive-dropped observation (fewer cards) is the safe
-# failure mode here, an advice-shaped sentence reaching the user is not.
+# negative-imperative directives ("avoid", "do not"), hedged recommendation
+# framing ("it may be wise to"), and the specific verbs a buy/sell/rebalance
+# suggestion would use. Deliberately broad — a false-positive-dropped
+# observation (fewer cards) is the safe failure mode here, an advice-shaped
+# sentence reaching the user is not.
 _ADVICE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -142,8 +144,14 @@ _ADVICE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"\bmy (advice|recommendation)\b",
         r"\bconsider (selling|buying|investing|rebalancing|moving|switching)\b",
         r"\bit('|’)s time to\b",
+        r"\bit (may|might|would) be (wise|prudent|advisable) to\b",
         r"\b(sell|buy|invest in|rebalance|diversify into|switch to|move (your|some) "
         r"(money|funds|assets))\b",
+        r"\bavoid\b",
+        r"\bdo not\b",
+        r"\bdon('|’)t\b",
+        r"\b(should|ought) not\b",
+        r"\bshouldn('|’)t\b",
     )
 )
 

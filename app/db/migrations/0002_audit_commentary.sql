@@ -5,7 +5,7 @@
 -- term_buckets / diversification_cuts (worker-only writes, `run_id not null`
 -- so a card always traces back to a lineage run, `unique (user_id,
 -- snapshot_date)` so a regenerate replaces rather than accumulates rows) —
--- see `app/db/queries/audit_commentary.py` for the replace-then-insert write.
+-- see `app/db/queries/audit_commentary.py` for the atomic upsert write.
 --
 -- Persisted at write time (not re-derived at read time) because the LLM call
 -- can only ever originate on the worker (ADR v1.1.0 §3: "all LLM callers

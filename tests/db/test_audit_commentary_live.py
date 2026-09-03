@@ -2,7 +2,7 @@
 (KCH-62 / AA-25).
 
 Same ephemeral-Postgres approach as `tests/db/test_gold_rebuild_live.py`: the
-replace-then-insert write, the RLS-scoped read path, and the lineage
+atomic upsert write, the RLS-scoped read path, and the lineage
 START/COMPLETE pair are real Postgres/asyncpg behaviour a mocked connection
 can't prove. Skips cleanly wherever Postgres tooling is unavailable, per
 CLAUDE.md. The LLM call itself is still faked — no network in this sandbox,

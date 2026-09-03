@@ -442,7 +442,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     // Independent of `cut`/the pie data — the card doesn't change with the
-    // diversification-cut switcher, so it only needs to load once.
+    // diversification-cut switcher, so it only needs to load once. The
+    // worker refreshes commentary on its own schedule (`commentary_loop`),
+    // so the card returned here can be older than the dashboard's latest
+    // snapshot; the render below only shows it when its `as_of` matches
+    // `data.as_of`, rather than showing an observation dated for a
+    // different snapshot without saying so.
     void getCommentary()
       .then(setCommentary)
       .catch(() => setCommentary(null));
@@ -579,7 +584,7 @@ export default function Dashboard() {
         </Box>
       </SimpleGrid>
 
-      <CommentaryCard commentary={commentary} />
+      <CommentaryCard commentary={commentary?.as_of === data.as_of ? commentary : null} />
 
       <DrillDownPanel
         isOpen={drillDownOpen}

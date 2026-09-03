@@ -98,6 +98,19 @@ def test_is_advice_shaped_flags_directive_language():
         assert is_advice_shaped(observation), observation
 
 
+def test_is_advice_shaped_flags_negative_imperative_and_hedged_language():
+    for observation in [
+        "Avoid concentrating further in one institution.",
+        "Do not add to your tech position this month.",
+        "Don't let your emergency fund shrink further.",
+        "You should not hold this much cash.",
+        "You shouldn't ignore the liabilities side.",
+        "It may be wise to spread holdings across institutions.",
+        "It might be wise to review your allocation.",
+    ]:
+        assert is_advice_shaped(observation), observation
+
+
 def test_is_advice_shaped_allows_factual_observations():
     for observation in [
         "Tech is 48% of your equity holdings.",

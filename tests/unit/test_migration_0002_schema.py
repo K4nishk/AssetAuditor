@@ -5,10 +5,26 @@ Pure text-based assertions — no database required, same convention as
 Postgres tooling is unavailable) lives in `tests/db/test_audit_commentary_live.py`.
 """
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_PATH = REPO_ROOT / "app/db/migrations/0002_audit_commentary.sql"
+
+
+def _assert_no_authenticated_dml(sql: str) -> None:
+    """Same convention `test_migration_0001_schema.py._assert_no_authenticated_dml`
+    uses: search the grant clause itself for a disallowed privilege rather than
+    a bare `f"grant {verb}"` substring, so a combined grant like `grant select,
+    insert on ... to authenticated;` (or `grant all ...`) is still caught."""
+    for verb in ("insert", "update", "delete", "all"):
+        grant = (
+            rf"grant\s+[^;]*\b{verb}\b[^;]*\bon\s+public\.audit_commentary"
+            rf"\s+to\s+authenticated\b"
+        )
+        assert re.search(grant, sql, re.IGNORECASE) is None, (
+            f"authenticated has a {verb} grant on audit_commentary"
+        )
 
 
 def test_migration_file_exists():
@@ -38,5 +54,4 @@ def test_authenticated_is_read_only_same_as_other_gold_tables():
     networth_snapshots/term_buckets/diversification_cuts."""
     sql = MIGRATION_PATH.read_text()
     assert "grant select on public.audit_commentary to authenticated;" in sql
-    for verb in ("insert", "update", "delete"):
-        assert f"grant {verb}" not in sql.lower()
+    _assert_no_authenticated_dml(sql)

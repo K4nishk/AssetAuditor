@@ -3,9 +3,11 @@
 `write_commentary` is worker-only — called from
 `worker.commentary.generate_audit_commentary` on whichever connection its
 caller passes (RLS-scoped or the worker's service_role, same convention
-`app.db.queries.gold.write_gold_snapshot` documents), delete-then-reinsert
-per `(user_id, snapshot_date)` so a regenerate replaces rather than
-accumulates rows. `get_latest_commentary` is the API's read (RLS-scoped
+`app.db.queries.gold.write_gold_snapshot` documents), an atomic upsert
+per `(user_id, snapshot_date)` so a regenerate replaces the existing card
+in place rather than a delete-then-insert that would leave the row
+briefly missing if the insert half failed or raced a concurrent
+regeneration. `get_latest_commentary` is the API's read (RLS-scoped
 connection, same convention as `app.db.queries.dashboard`).
 """
 
@@ -16,14 +18,17 @@ from datetime import date
 
 import asyncpg
 
-_DELETE_SQL = """
-    delete from public.audit_commentary where user_id = $1 and snapshot_date = $2
-"""
-
-_INSERT_SQL = """
+_UPSERT_SQL = """
     insert into public.audit_commentary
         (user_id, snapshot_date, observations, disclosure, model_backend, run_id)
     values ($1, $2, $3::jsonb, $4, $5, $6)
+    on conflict (user_id, snapshot_date) do update set
+        observations = excluded.observations,
+        disclosure = excluded.disclosure,
+        model_backend = excluded.model_backend,
+        run_id = excluded.run_id,
+        deactivated_at = null,
+        created_at = now()
     returning id, user_id, snapshot_date, observations, disclosure, model_backend,
         run_id, created_at
 """
@@ -47,9 +52,8 @@ async def write_commentary(
     model_backend: str,
     run_id: str,
 ) -> asyncpg.Record:
-    await conn.execute(_DELETE_SQL, user_id, snapshot_date)
     return await conn.fetchrow(
-        _INSERT_SQL,
+        _UPSERT_SQL,
         user_id,
         snapshot_date,
         json.dumps(observations),
