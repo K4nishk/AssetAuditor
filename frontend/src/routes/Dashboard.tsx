@@ -3,7 +3,9 @@ import {
   AlertIcon,
   Badge,
   Box,
+  Button,
   Center,
+  Code,
   Drawer,
   DrawerBody,
   DrawerCloseButton,
@@ -28,7 +30,7 @@ import {
   Tr,
   VStack,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { ApiError } from "../lib/api";
@@ -244,6 +246,10 @@ function DrillDownPanel({
   error: string | null;
   slice: LineageSlice | null;
 }) {
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const onToggleRow = (rowId: string) =>
+    setExpandedRowId((current) => (current === rowId ? null : rowId));
+
   return (
     <Drawer isOpen={isOpen} placement="right" onClose={onClose} size="md">
       <DrawerOverlay />
@@ -277,9 +283,14 @@ function DrillDownPanel({
                 <Text fontSize="xs" color="gray.500" mb={1}>
                   Source file
                 </Text>
-                {slice.source_file === null && (
+                {slice.source_file === null && slice.job_id === null && (
                   <Text fontSize="sm" color="gray.500">
                     No job is linked to this run yet.
+                  </Text>
+                )}
+                {slice.source_file === null && slice.job_id !== null && (
+                  <Text fontSize="sm" color="gray.500">
+                    Source file is unavailable for this job.
                   </Text>
                 )}
                 {slice.source_file !== null && slice.source_file.is_purged && (
@@ -316,16 +327,46 @@ function DrillDownPanel({
                         <Th>Entity</Th>
                         <Th>Method</Th>
                         <Th>Confirmed</Th>
+                        <Th />
                       </Tr>
                     </Thead>
                     <Tbody>
-                      {slice.rows.map((row) => (
-                        <Tr key={row.id}>
-                          <Td>{ENTITY_LABELS[row.entity] ?? row.entity}</Td>
-                          <Td>{METHOD_LABELS[row.method] ?? row.method}</Td>
-                          <Td fontSize="xs">{row.confirmed_at ?? "unconfirmed"}</Td>
-                        </Tr>
-                      ))}
+                      {slice.rows.map((row) => {
+                        const isExpanded = expandedRowId === row.id;
+                        return (
+                          <Fragment key={row.id}>
+                            <Tr>
+                              <Td>{ENTITY_LABELS[row.entity] ?? row.entity}</Td>
+                              <Td>{METHOD_LABELS[row.method] ?? row.method}</Td>
+                              <Td fontSize="xs">{row.confirmed_at ?? "unconfirmed"}</Td>
+                              <Td>
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  onClick={() => onToggleRow(row.id)}
+                                >
+                                  {isExpanded ? "Hide" : "Details"}
+                                </Button>
+                              </Td>
+                            </Tr>
+                            {isExpanded && (
+                              <Tr>
+                                <Td colSpan={4}>
+                                  <Code
+                                    display="block"
+                                    whiteSpace="pre-wrap"
+                                    fontSize="xs"
+                                    p={2}
+                                    borderRadius="md"
+                                  >
+                                    {JSON.stringify(row.payload, null, 2)}
+                                  </Code>
+                                </Td>
+                              </Tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                     </Tbody>
                   </Table>
                 )}
@@ -348,6 +389,7 @@ export default function Dashboard() {
   const [drillDownLoading, setDrillDownLoading] = useState(false);
   const [drillDownError, setDrillDownError] = useState<string | null>(null);
   const [drillDownSlice, setDrillDownSlice] = useState<LineageSlice | null>(null);
+  const drillDownRequestId = useRef(0);
 
   const load = useCallback(async (nextCut: DiversificationCut) => {
     setLoading(true);
@@ -366,16 +408,24 @@ export default function Dashboard() {
   }, [load, cut]);
 
   const openDrillDown = useCallback(async (selector: SliceSelector) => {
+    const requestId = ++drillDownRequestId.current;
     setDrillDownOpen(true);
     setDrillDownLoading(true);
     setDrillDownError(null);
     setDrillDownSlice(null);
     try {
-      setDrillDownSlice(await getLineageSlice(selector));
+      const result = await getLineageSlice(selector);
+      if (drillDownRequestId.current === requestId) {
+        setDrillDownSlice(result);
+      }
     } catch (err) {
-      setDrillDownError(err instanceof ApiError ? err.message : "failed to load this slice's lineage");
+      if (drillDownRequestId.current === requestId) {
+        setDrillDownError(err instanceof ApiError ? err.message : "failed to load this slice's lineage");
+      }
     } finally {
-      setDrillDownLoading(false);
+      if (drillDownRequestId.current === requestId) {
+        setDrillDownLoading(false);
+      }
     }
   }, []);
 
