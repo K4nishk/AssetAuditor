@@ -177,7 +177,7 @@ def test_get_networth_history_returns_empty_points_when_no_snapshots_exist():
 
 
 def test_get_networth_history_returns_points_oldest_first():
-    _override_conn(
+    fake = _override_conn(
         history_rows=[
             {
                 "snapshot_date": date(2026, 6, 30),
@@ -200,3 +200,5 @@ def test_get_networth_history_returns_points_oldest_first():
     body = response.json()
     assert [p["snapshot_date"] for p in body["points"]] == ["2026-06-30", "2026-07-31"]
     assert body["points"][1]["net_worth_cad"] == "196459.00"
+    history_call = next(c for c in fake.calls if "public.networth_snapshots" in c[0])
+    assert "order by snapshot_date asc" in history_call[0]

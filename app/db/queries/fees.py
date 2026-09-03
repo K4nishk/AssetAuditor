@@ -22,19 +22,34 @@ _FETCH_MER_SQL = """
     join public.accounts a on a.id = h.account_id and a.user_id = h.user_id
     where h.user_id = $1 and h.deactivated_at is null and a.deactivated_at is null
       and h.mer_pct is not null
+    order by h.ticker, h.id
 """
 
 
 async def fetch_mer_by_ticker(conn: asyncpg.Connection, *, user_id: str) -> dict[str, Decimal]:
     """Every current holding's disclosed MER, keyed by ticker.
 
-    A ticker held at more than one institution keeps whichever row the query
-    returns last — this MVP has no notion of "the same fund's MER differs by
-    account", and CLAUDE.md's provenance rule is about never fabricating a
-    number, not about resolving that edge case.
+    A ticker held at more than one institution is expected to carry the same
+    disclosed MER everywhere — it's a per-fund rate, not a per-account one.
+    If two rows for the same ticker actually disagree, there is no way to
+    know which one applies, so that ticker is dropped rather than resolved
+    by an arbitrary pick (`order by h.id` only makes the fetch itself
+    deterministic; it does not decide which of two conflicting real MERs is
+    correct). Same never-guessed-only-known posture as
+    `app.domain.etf_classification`: excluded, not fabricated.
     """
     rows = await conn.fetch(_FETCH_MER_SQL, user_id)
-    return {row["ticker"]: row["mer_pct"] for row in rows}
+    mer_by_ticker: dict[str, Decimal] = {}
+    conflicting: set[str] = set()
+    for row in rows:
+        ticker, mer_pct = row["ticker"], row["mer_pct"]
+        if ticker in mer_by_ticker and mer_by_ticker[ticker] != mer_pct:
+            conflicting.add(ticker)
+            continue
+        mer_by_ticker[ticker] = mer_pct
+    for ticker in conflicting:
+        del mer_by_ticker[ticker]
+    return mer_by_ticker
 
 
 __all__ = ["fetch_mer_by_ticker"]

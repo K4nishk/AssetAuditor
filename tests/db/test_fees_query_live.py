@@ -109,6 +109,49 @@ async def test_fetch_mer_by_ticker_only_returns_holdings_with_a_disclosed_mer(se
     assert mer_by_ticker == {"TD-BALANCED-GROWTH": Decimal("2.18")}
 
 
+async def test_fetch_mer_by_ticker_drops_a_ticker_whose_accounts_disclose_different_mers(
+    seeded_db,
+):
+    conn = seeded_db["conn"]
+    user_id = seeded_db["user_id"]
+
+    td_account_id = await _insert_account(
+        conn, user_id=user_id, institution="td", account_type="mutual_fund", mask="td-...6612"
+    )
+    await conn.execute(
+        """
+        insert into public.holdings
+            (user_id, account_id, ticker, quantity, avg_cost, currency, mer_pct)
+        values ($1, $2, 'TD-BALANCED-GROWTH', $3, $4, 'CAD', $5)
+        """,
+        user_id,
+        td_account_id,
+        Decimal("500"),
+        Decimal("14.40"),
+        Decimal("2.18"),
+    )
+
+    other_account_id = await _insert_account(
+        conn, user_id=user_id, institution="questrade", account_type="rrsp", mask="qt-...1120"
+    )
+    await conn.execute(
+        """
+        insert into public.holdings
+            (user_id, account_id, ticker, quantity, avg_cost, currency, mer_pct)
+        values ($1, $2, 'TD-BALANCED-GROWTH', $3, $4, 'CAD', $5)
+        """,
+        user_id,
+        other_account_id,
+        Decimal("100"),
+        Decimal("14.40"),
+        Decimal("1.99"),
+    )
+
+    mer_by_ticker = await fetch_mer_by_ticker(conn, user_id=user_id)
+
+    assert mer_by_ticker == {}
+
+
 async def test_write_confirmed_rows_persists_mer_pct_from_the_staged_payload(seeded_db):
     conn = seeded_db["conn"]
     user_id = seeded_db["user_id"]
