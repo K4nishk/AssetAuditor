@@ -49,4 +49,5 @@ created: 2026-08-31
 ## Decisions log
 - [[50-decisions-log/2026-08-31-planning-session]]
 - [[50-decisions-log/2026-09-01-review-debt]] — free-tier CodeRabbit, deferred review, autonomous loops
+- [[50-decisions-log/2026-09-03-review-evidence]] — provable review gate, aborted-review guard, deferred findings
 - [[50-decisions-log/2026-08-31-clarifications-round]] — CLARIFICATIONS resolved → ADR v1.1.0, planning wrap-up ready

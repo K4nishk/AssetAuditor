@@ -92,6 +92,33 @@ in `ops/.env.local` (gitignored).
   The default is the repo's default branch only, so `development` and `feature/.*` must
   both be listed, and the config must exist on the **default branch** (`main`).
 
+## macOS TCC and launchd
+
+**A LaunchAgent's child shell cannot read `~/Documents`.** This is the single most
+expensive landmine in the build: `com.assetauditor.review-sweeper` fired hourly for a
+full day and never once worked, exiting 1 with
+
+```
+shell-init: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: .../ops/.env.local: Operation not permitted
+```
+
+The tell is the asymmetry: **launchd itself writes the agent's log into `~/Documents`
+fine**, because launchd is privileged — but the `bash` it spawns is not. So the error
+file grows while nothing runs, and `launchctl print` shows a perfectly healthy agent
+(`state = not running`, which means idle, not broken). Check `runs` and
+`last exit code` instead.
+
+Not a permissions problem in the unix sense: `ls -l` shows the file readable, and
+`~/Documents` shows `drwx------+` — the `+` is the TCC ACL.
+
+Two fixes. **Move the repo out of `~/Documents`** (TCC does not guard arbitrary home
+paths) — clean, but every plist hardcodes the path. Or **grant Full Disk Access to
+`/bin/bash`** in System Settings → Privacy & Security — fast, but it grants FDA to every
+bash script on the machine. Neither has been done; the sweeper is hand-run instead.
+
+Anything run from your own terminal is unaffected — Terminal has TCC access.
+
 ## launchd
 
 Prefer `StartCalendarInterval` over `StartInterval`: it fires on **wake** and coalesces
