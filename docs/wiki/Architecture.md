@@ -8,5 +8,11 @@ Public summary of [ADR v1.1.0](../adr/ADR_v1.1.0.md) (current; v1.0.0 superseded
 
 Diagrams: the ADR's mermaid blocks (they render on GitHub). Cost contract: ADR v1.1.0 §4 — any component leaving its free tier is a design event, not a charge.
 
+The same story, narrated rather than tabulated, ships in-app as MDX at
+`/blog/architecture-story` (public, no login required) — the two system diagrams above
+render live via `mermaid`, and the dashboard/rooms "screenshots" are fed the mock user's
+published reference totals (`data/samples/README.md`), never a real account (mvp.md
+AA-31). Source: `frontend/src/content/architecture-story.mdx`.
+
 ## Code review pipeline
 Three surfaces, none of which block development: a **CLI gate** before each PR opens, the **SaaS PR review** answered by `ops/remediate_prs.sh`, and an hourly **launchd review sweeper** that settles reviews deferred when CodeRabbit's free-tier quota runs out. Findings are classified by *contract impact* — fixed in place, fixed with the contract republished to downstream agents, or escalated as a Linear issue with the risk of shipping without it stated on the PR. Development itself runs unattended via `ops/run_builder.sh` on a 2-hourly launchd schedule. See `docs/vault/30-architecture/Review-Debt-Sweeper.md`.
