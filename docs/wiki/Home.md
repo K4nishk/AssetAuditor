@@ -4,7 +4,7 @@ Public-facing distillation. Canonical sources live in `docs/vault/` (thinking) a
 `docs/adr/` (decisions of record); these pages are the operational summary.
 
 ## Start here
-- **[local-quickstart](local-quickstart.md)** — get tests, Postgres, the API and the frontend running on this machine
+- **[Local-Quickstart](Local-Quickstart.md)** — get tests, Postgres, the API and the frontend running on this machine
 - **[Project-Status](Project-Status.md)** — where the build is, what runs by itself, cold-start reading order
 - **[Environment-Gotchas](Environment-Gotchas.md)** — this machine's landmines, each one already paid for
 - [Architecture](Architecture.md) — the $0/month stack and the code-review pipeline

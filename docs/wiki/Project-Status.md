@@ -99,7 +99,7 @@ is why the sweeper being dead mattered more than it looked.
 
 ## Cold-start reading order
 
-1. [local-quickstart](local-quickstart.md) — running it on this machine
+1. [Local-Quickstart](Local-Quickstart.md) — running it on this machine
 2. `ops/README.md` — how to run everything, and the five hard-won rules
 3. `CLAUDE.md` — binding conventions, especially the CodeRabbit protocol
 4. [Environment-Gotchas](Environment-Gotchas.md) — the machine's landmines
