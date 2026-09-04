@@ -1,10 +1,18 @@
 import { Button, Center, Heading, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useCallback, useEffect, useState } from "react";
-import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Link as RouterLink,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ApiError } from "./lib/api";
 import { type ProfileOut, getProfile } from "./lib/profileApi";
+import Blog from "./routes/Blog";
 import Dashboard from "./routes/Dashboard";
 import DemoSeedButton from "./routes/DemoSeedButton";
 import Login from "./routes/Login";
@@ -49,6 +57,9 @@ function AuthenticatedShell({
         Log out
       </Button>
       <DemoSeedButton />
+      <Button as={RouterLink} to="/blog/architecture-story" size="sm" variant="ghost">
+        Read the architecture story
+      </Button>
     </VStack>
   );
 }
@@ -155,8 +166,26 @@ function RoomsRoute() {
   return <Rooms />;
 }
 
+// The blog is checked before the auth gate below (mvp.md AA-31: an
+// architecture showcase has to be reachable by someone who has not signed
+// up yet). Everything else in this app requires a session, so this is the
+// one exception rather than a generic "public routes" mechanism.
+function BlogRoutes() {
+  return (
+    <Routes>
+      <Route path="/blog/architecture-story" element={<Blog />} />
+      <Route path="/blog/*" element={<Navigate to="/blog/architecture-story" replace />} />
+    </Routes>
+  );
+}
+
 function AppRoutes() {
   const { session, loading } = useAuth();
+  const location = useLocation();
+
+  if (location.pathname.startsWith("/blog/")) {
+    return <BlogRoutes />;
+  }
 
   if (loading) {
     return (
