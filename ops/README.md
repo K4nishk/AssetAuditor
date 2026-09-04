@@ -156,6 +156,19 @@ The file is tracked, not gitignored — a deferral is a decision on the record. 
 a real Linear id and a reason someone can argue with. Do not use it to clear a finding
 you simply do not want to fix.
 
+### Non-blocking findings are swept at the final gate, not during the build
+
+The CLI gate only *blocks* the build loop on `critical|major|blocker|high` (see
+`CR_BLOCKING` above) — a `minor` finding never stops an issue from proceeding, and
+until KCH-72 (AA-36) nothing ever came back for the ones that piled up. That is a
+deliberate trade during the build (an unattended loop cannot spend an unbounded number
+of CodeRabbit rounds chasing polish), not a decision to never look at them. KCH-72 is
+the swept-up gate: every non-blocking finding still open at each PR's final review gets
+read and either fixed or recorded in `ops/deferred_findings.tsv` with a rationale, once,
+after the queue is done and before anything ships. Do not treat a green `coderabbit/
+cli-gate` status as "no findings" — it only ever meant "no *blocking* findings"; read
+the round detail in the PR comment for the rest.
+
 ### Run the sweeper after every build, before the next one
 
 ```bash

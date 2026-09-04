@@ -10,3 +10,11 @@
 # RESOLVED 2026-09-02: KCH-71 fixed by hand on development once KCH-51 merged.
 # Kept as the record of the decision — the gate no longer needs it, KCH-51 is merged.
 #KCH-51	5	.github/workflows/llm-evals.yml	KCH-71	Path filter omits pyproject.toml/uv.lock, so a dependency-only PR does not schedule the eval. Latent until GROQ_API_KEY is live; failure mode is a missed trigger, not a wrong result. Deferred to end a five-round loop that was gating PRs #16-#19 and everything stacked above them.
+#
+# RESOLVED 2026-09-03 (KCH-72 non-blocking sweep): worker/bring-up.md's r0 finding
+# asked to remove the claim that AA-27 wires Alloy scraping + the stale-while-queued
+# alert, because at KCH-57 review time AA-27 (KCH-64) hadn't landed yet and the claim
+# was premature. KCH-64 has since landed and rewrote that section with accurate
+# current-state documentation plus its own "Unverified" caveat, superseding the flagged
+# text outright. Verified against current worker/bring-up.md — no code change needed.
+#KCH-57	0	worker/bring-up.md	KCH-72	Finding predates KCH-64/AA-27 landing; KCH-64's "Alloy scrape + Grafana Cloud" section already replaced the flagged forward-claim with accurate documentation. Verified moot, not fixed here because there is nothing left to fix.
