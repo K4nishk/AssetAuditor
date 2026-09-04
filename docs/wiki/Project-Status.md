@@ -99,12 +99,13 @@ is why the sweeper being dead mattered more than it looked.
 
 ## Cold-start reading order
 
-1. `ops/README.md` — how to run everything, and the five hard-won rules
-2. `CLAUDE.md` — binding conventions, especially the CodeRabbit protocol
-3. [Environment-Gotchas](Environment-Gotchas.md) — the machine's landmines
-4. `docs/adr/ADR_v1.1.0.md` — architecture of record
-5. `ops/logs/NIGHT_REPORT.md` — what shipped and the merge order
-6. `mvp.md` — the issue specs; `data/samples/README.md` — the golden numbers
+1. [local-quickstart](local-quickstart.md) — running it on this machine
+2. `ops/README.md` — how to run everything, and the five hard-won rules
+3. `CLAUDE.md` — binding conventions, especially the CodeRabbit protocol
+4. [Environment-Gotchas](Environment-Gotchas.md) — the machine's landmines
+5. `docs/adr/ADR_v1.1.0.md` — architecture of record
+6. `ops/logs/NIGHT_REPORT.md` — what shipped and the merge order
+7. `mvp.md` — the issue specs; `data/samples/README.md` — the golden numbers
 
 ## Standing decisions worth not relitigating
 
