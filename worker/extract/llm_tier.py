@@ -306,8 +306,13 @@ def extract_transactions(
                 )
 
         drafts = [
-            _to_draft(row, institution_slug=institution_slug, account_mask_override=account_mask)
-            for row in rows
+            _to_draft(
+                row,
+                index=index,
+                institution_slug=institution_slug,
+                account_mask_override=account_mask,
+            )
+            for index, row in enumerate(rows)
         ]
     except Exception:
         # `response` is only `None` if the request call itself failed
@@ -338,23 +343,46 @@ def _validate_confidence(name: str, value: Any) -> float:
 
 
 def _to_draft(
-    row: dict[str, Any], *, institution_slug: str, account_mask_override: str | None
+    row: dict[str, Any],
+    *,
+    index: int,
+    institution_slug: str,
+    account_mask_override: str | None,
 ) -> StagedRowDraft:
+    # Which field we are mid-parse on, so a failure can name it. The raw value
+    # deliberately never reaches the message: `to_decimal` and
+    # `_validate_confidence` put the offending value in *their* text
+    # (`not a decimal: '3,450.00'`), and that text would otherwise be chained
+    # into an error that gets logged — and, for the golden-set eval, published
+    # to a run-page annotation. Statement-derived values must not travel that
+    # way (CLAUDE.md hard rule #2;
+    # `tests/unit/test_llm_tier.py::test_extraction_errors_do_not_echo_statement_data`).
+    # The field name plus the exception type is what a triager actually needs:
+    # "row 0, field 'amount', AdapterParseError" says the model emitted
+    # something `Decimal()` refused, which for this tier is almost always the
+    # statement's own thousands separator or an un-inferred year.
+    current_field = "confidence"
     try:
         confidence = row["confidence"]
         field_confidence = {
             name: _validate_confidence(name, confidence[name]) for name in _CONFIDENCE_FIELDS
         }
+        current_field = "occurred_at"
         occurred_at = to_datetime_utc(str(row["occurred_at"]))
+        current_field = "kind"
         kind = row["kind"]
+        current_field = "amount"
         amount = require_decimal(row["amount"], field="amount")
+        current_field = "balance_after"
         balance_after = row["balance_after"]
         balance_after_decimal = (
             require_decimal(balance_after, field="balance_after")
             if balance_after is not None
             else None
         )
+        current_field = "description"
         description = str(row["description"])
+        current_field = "account_mask"
         raw_account_mask = row["account_mask"]
         account_mask = account_mask_override
         if account_mask is None and raw_account_mask is not None:
@@ -364,10 +392,25 @@ def _to_draft(
         # `confidence` both raise it, so a model answering `"confidence": null`
         # (or a null field inside it) escaped as a bare TypeError instead of the
         # LlmExtractionError every caller of this module catches.
-        raise LlmExtractionError("malformed transaction row from LiteLLM") from exc
+        raise LlmExtractionError(
+            f"malformed transaction row at index {index} from LiteLLM: field "
+            f"{current_field!r} failed to parse ({type(exc).__name__}); value withheld "
+            "because exception text must not carry statement-derived data"
+        ) from exc
 
     if kind not in ("debit", "credit"):
-        raise LlmExtractionError(f"invalid transaction kind {kind!r}")
+        # `kind` is NOT a guaranteed schema enum member: `_validate_confidence`
+        # above exists precisely because a provider may ignore the schema, so a
+        # hallucinated row can carry statement text in this field. Echoing it
+        # put merchant strings and amounts into a message that is logged and —
+        # since the golden-set eval publishes it — rendered as a public CI
+        # annotation. Name the constraint, withhold the value (CLAUDE.md hard
+        # rule #2; `test_extraction_errors_do_not_echo_statement_data`).
+        raise LlmExtractionError(
+            f"invalid transaction kind at index {index} from LiteLLM (expected "
+            "'debit' or 'credit'); value withheld because exception text must "
+            "not carry statement-derived data"
+        )
 
     row_confidence = min(field_confidence.values())
 

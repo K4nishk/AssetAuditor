@@ -494,14 +494,64 @@ def test_null_confidence_object_becomes_an_extraction_error() -> None:
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
 
 
+def test_malformed_row_error_names_the_row_and_field() -> None:
+    """A triager has to know *which* of six fields the model lost.
+
+    The golden-set eval publishes this message to a run-page annotation, and
+    GitHub job logs need repo admin to read — so "malformed transaction row"
+    with no field name left the failure undiagnosable for anyone without it.
+    """
+    client = FakeClient([_row(), _row(amount="3,450.00")])
+    with pytest.raises(LlmExtractionError) as excinfo:
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+    message = str(excinfo.value)
+    assert "index 1" in message
+    assert "'amount'" in message
+    assert "AdapterParseError" in message
+
+
+def test_malformed_row_error_withholds_the_offending_value() -> None:
+    """The counterweight to naming the field: never name the value.
+
+    `to_decimal` puts the raw value in its own message (`not a decimal:
+    '3,450.00'`), so chaining the cause's text into this error would route a
+    statement-derived amount into logs and annotations. The field name plus the
+    exception type carries the diagnosis without the data.
+    """
+    client = FakeClient([_row(amount="3,450.00")])
+    with pytest.raises(LlmExtractionError) as excinfo:
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+    assert "3,450.00" not in str(excinfo.value)
+
+
+def test_malformed_date_error_names_occurred_at() -> None:
+    """The other formatting slip this tier actually sees: the statement prints
+    `Jul 02` and the year only in its header, so a model that does not infer it
+    fails on `occurred_at` rather than on an amount."""
+    client = FakeClient([_row(occurred_at="Jul 02")])
+    with pytest.raises(LlmExtractionError) as excinfo:
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+    message = str(excinfo.value)
+    assert "'occurred_at'" in message
+    assert "Jul 02" not in message
+
+
 def test_extraction_errors_do_not_echo_statement_data() -> None:
     """Exception text lands in logs, so it must not carry statement-derived
     values — the whole point of masking before the model sees anything."""
-    row = _row(description="PAYROLL DEPOSIT ACME CORP", kind="not-a-kind")
+    # `kind` carries the statement text here on purpose: a provider that
+    # ignores the schema's enum can put anything in this field, and the old
+    # `kind="not-a-kind"` made this test pass without exercising the leak.
+    row = _row(
+        description="PAYROLL DEPOSIT ACME CORP",
+        kind="PAYROLL DEPOSIT ACME CORP 3,450.00",
+    )
     client = FakeClient(transactions=[row])
     with pytest.raises(LlmExtractionError) as excinfo:
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
-    assert "ACME" not in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "ACME" not in message
+    assert "3,450.00" not in message
 
 
 def test_injected_non_sdk_client_pointed_at_a_provider_is_rejected() -> None:

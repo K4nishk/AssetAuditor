@@ -111,12 +111,62 @@ jobs:
           exit 1
 
       - name: Run golden-set eval
+        id: eval
         if: steps.check.outputs.configured == 'true'
         env:
           LITELLM_BASE_URL: http://localhost:4000
           # Same value the router was started with — a mismatch is a 401, not a skip.
           LITELLM_API_KEY: ${{ env.LITELLM_MASTER_KEY }}
+          # The eval appends its verdict here as well as to the step summary;
+          # the next step turns it into an annotation. Job logs need repo admin
+          # to read, annotations and the summary do not.
+          EVAL_REPORT_FILE: ${{ runner.temp }}/eval-report.txt
         run: uv run pytest tests/evals/ -v -m llm_eval
+
+      # Why this is not folded into the step above: the eval's own `::error::`
+      # would have to survive pytest's stdout capture to become an annotation,
+      # and a step that has already failed does not get to emit one. Reading
+      # the report file back in a separate `always()` step is the reliable
+      # route, and it is what makes a failure legible to a triager who cannot
+      # open the log.
+      - name: Publish the eval verdict
+        if: always() && steps.check.outputs.configured == 'true'
+        env:
+          EVAL_REPORT_FILE: ${{ runner.temp }}/eval-report.txt
+          # Through `env`, not interpolated into the script body: a `${{ }}`
+          # expression expands before bash parses the line.
+          EVAL_OUTCOME: ${{ steps.eval.outcome }}
+        run: |
+          if [ -s "$EVAL_REPORT_FILE" ]; then
+            # First line is the headline; keep the annotation to one line so
+            # the run page shows the score without expanding anything.
+            HEADLINE="$(head -n 1 "$EVAL_REPORT_FILE")"
+            if [ "$EVAL_OUTCOME" = "success" ]; then
+              echo "::notice::$HEADLINE"
+            else
+              echo "::error::$HEADLINE"
+            fi
+            cat "$EVAL_REPORT_FILE"
+            exit 0
+          fi
+
+          # No verdict file at all. If pytest still reported success then the
+          # eval was skipped or collected nothing, which is the same false
+          # green this job used to emit — fail instead of passing silently.
+          if [ "$EVAL_OUTCOME" = "success" ]; then
+            echo "::error::The golden-set eval reported success without scoring anything, so it was skipped or collected no tests. Failing deliberately: a green eval that never ran is the bug this check exists to catch."
+            exit 1
+          fi
+          echo "::error::The golden-set eval died before it could score anything — dependency sync, an import error, or the router refusing the connection. The router log follows."
+
+      # The router's own view of the failure — a Groq 401, a 429 against the
+      # rpm/tpm caps in llm/litellm.config.yaml, or a decommissioned model id
+      # are all invisible from pytest's side, which only ever sees an opaque
+      # client error. Previously this ran only when the health check failed, so
+      # the one failure mode that actually occurs went uncaptured.
+      - name: Router log on failure
+        if: failure() && steps.check.outputs.configured == 'true'
+        run: docker logs litellm 2>&1 | tail -n 200 || true
 
       - name: Stop LiteLLM router
         if: always() && steps.check.outputs.configured == 'true'
