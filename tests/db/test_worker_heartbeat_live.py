@@ -20,6 +20,28 @@ from worker.main import send_heartbeat
 MIGRATION_SQL = Path("app/db/migrations/0001_init.sql").read_text()
 MIGRATION_SQL_LOCAL = MIGRATION_SQL.replace("create extension if not exists pgsodium;\n", "")
 
+# Migration 0001's policies call `auth.uid()`, which Supabase provides and the
+# migration deliberately does not define. Applying it against a bare cluster
+# therefore needs the same stub every other tests/db module installs first.
+AUTH_STUB_SQL = """
+create schema auth;
+
+create table auth.users (
+    id uuid primary key default gen_random_uuid(),
+    email text
+);
+
+create function auth.uid() returns uuid
+language sql stable
+as $$
+    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
+grant usage on schema auth to authenticated;
+grant execute on function auth.uid() to authenticated;
+grant usage on schema public to authenticated;
+"""
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -29,6 +51,7 @@ async def seeded_db(pg_cluster, scratch_database):
         host=pg_cluster["socket_dir"], user=pg_cluster["admin_user"], database=scratch_database
     )
     try:
+        await conn.execute(AUTH_STUB_SQL)
         await conn.execute(MIGRATION_SQL_LOCAL)
         yield conn
     finally:
