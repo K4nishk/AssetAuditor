@@ -147,6 +147,14 @@ async def test_authenticated_role_can_read_but_not_write_prices(
     )
     try:
         async with user_conn.transaction():
+            # `prices_read` is `using (auth.uid() is not null)`, and the stub
+            # `auth.uid()` reads `request.jwt.claim.sub`. Switching role alone
+            # leaves that claim unset, so auth.uid() is NULL and the policy
+            # correctly hides every row — the same per-transaction claim the
+            # API's RLS-scoped pool sets has to be set here too.
+            await user_conn.execute(
+                "select set_config('request.jwt.claim.sub', $1, true)", str(seeded_db["user_id"])
+            )
             await user_conn.execute("set local role authenticated")
             readable = await user_conn.fetch("select ticker from public.prices")
             assert [row["ticker"] for row in readable] == ["AAPL"]

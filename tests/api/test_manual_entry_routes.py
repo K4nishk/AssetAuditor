@@ -122,7 +122,9 @@ def test_submit_portfolio_entry_rejects_missing_avg_cost_and_lots():
     )
 
     assert response.status_code == 422
-    assert "avg_cost or" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "avg_cost" in detail
+    assert "at least one lot" in detail
 
 
 def test_submit_portfolio_entry_rejects_an_unmaskable_account_number():
