@@ -112,9 +112,11 @@ async def test_seed_loads_every_demo_fixture_into_silver_and_rebuilds_gold(seede
 
     silver_summary = await _seed_all_fixtures(conn, user_id=user_id, blob=blob)
 
-    # Every fixture stages at least one account, and every institution's
-    # bytes actually made it to "blob storage" once each.
-    assert silver_summary["account"] == len(DEMO_FIXTURES)
+    # Every fixture stages at least one account (several stage more than one —
+    # scotiabank is chequing + savings, wealthsimple is HISA + FHSA), and every
+    # institution's bytes actually made it to "blob storage" once each. Full
+    # institution coverage is asserted exactly below via the institutions set.
+    assert silver_summary["account"] >= len(DEMO_FIXTURES)
     assert len(blob.puts) == len(DEMO_FIXTURES)
 
     await upsert_profile(conn, user_id=user_id, **ALEX_MOCK_PROFILE)
@@ -161,4 +163,4 @@ async def test_reseeding_after_a_purge_does_not_duplicate_silver_rows(seeded_db)
 
     assert second == first
     accounts = await conn.fetch("select id from public.accounts where user_id = $1", user_id)
-    assert len(accounts) == len(DEMO_FIXTURES)
+    assert len(accounts) >= len(DEMO_FIXTURES)
