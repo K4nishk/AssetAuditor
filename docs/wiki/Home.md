@@ -15,4 +15,5 @@ Public-facing distillation. Canonical sources live in `docs/vault/` (thinking) a
 - `CLAUDE.md` — binding conventions for every agent (CodeRabbit protocol, branching, hard rules)
 - `docs/adr/ADR_v1.1.0.md` — architecture of record (v1.0.0 superseded, v2.0.0 rejected)
 - `docs/vault/00-Home.md` — the Obsidian vault: mental models, domain notes, research, decision log
-- `mvp.md` — issue specs · `data/samples/README.md` — fixtures and golden numbers
+- `mvp.md` — issue specs (MVP, AA-1…AA-36) · `data/samples/README.md` — fixtures and golden numbers
+- `docs/mvp1/build_plan.md` — **MVP1** (AI Security Engineer portfolio): issues AA-37+, two security pillars · `docs/mvp1/assumptions.md` — MVP1 assumptions (A17+)
