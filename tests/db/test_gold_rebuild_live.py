@@ -32,7 +32,14 @@ create table auth.users (
     email text
 );
 
+create function auth.uid() returns uuid
+language sql stable
+as $$
+    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
 grant usage on schema auth to authenticated;
+grant execute on function auth.uid() to authenticated;
 grant usage on schema public to authenticated;
 """
 
@@ -125,6 +132,18 @@ async def test_rebuild_gold_computes_networth_buckets_and_cuts(seeded_db):
         tfsa_id,
         Decimal("10"),
         Decimal("180.00"),
+    )
+    # A non-CAD holding now needs an FX row or `convert_to_cad` raises
+    # MissingFxRateError. This test is about bucket/cut composition, not the
+    # conversion itself, so seed an identity rate to keep the arithmetic below
+    # unchanged; the real 1.35 conversion is proved in test_gold_rebuild_fx_live.
+    await conn.execute(
+        """
+        insert into public.prices (ticker, date, close, source)
+        values ('USDCAD=X', $1, $2, 'yfinance')
+        """,
+        date(2026, 7, 31),
+        Decimal("1.00"),
     )
 
     await conn.execute(

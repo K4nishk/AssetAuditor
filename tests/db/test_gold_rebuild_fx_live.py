@@ -34,7 +34,14 @@ create table auth.users (
     email text
 );
 
+create function auth.uid() returns uuid
+language sql stable
+as $$
+    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
 grant usage on schema auth to authenticated;
+grant execute on function auth.uid() to authenticated;
 grant usage on schema public to authenticated;
 """
 
@@ -143,7 +150,9 @@ async def test_rebuild_gold_fails_lineage_when_no_fx_rate_available(seeded_db):
     fail_event = await conn.fetchrow(
         """
         select payload from public.lineage_events
-        where user_id = $1 and step = 'gold_rebuild' and event_type = 'FAIL'
+        where user_id = $1
+          and payload->'job'->>'name' = 'gold_rebuild'
+          and event_type = 'FAIL'
         """,
         user_id,
     )

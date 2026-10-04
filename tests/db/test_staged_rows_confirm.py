@@ -32,7 +32,14 @@ create table auth.users (
     email text
 );
 
+create function auth.uid() returns uuid
+language sql stable
+as $$
+    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
 grant usage on schema auth to authenticated;
+grant execute on function auth.uid() to authenticated;
 grant usage on schema public to authenticated;
 """
 
