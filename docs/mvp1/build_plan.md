@@ -1,16 +1,22 @@
 # AssetAuditor MVP1 — build plan
 
-> Successor to `mvp.md` (AA-1…AA-36, "MVP"). MVP1 repositions AssetAuditor as a
-> **Senior AI Security Engineer portfolio project**: the finance features are the
-> *workload* that justifies a secured, observable AI platform. Written issues-not-stories
-> (per `mvp.md`): each issue is a concrete task with a done-state; the *why* lives in the
-> milestone header. Issue IDs continue from **AA-37** and are stable.
+> Successor to `mvp.md` (AA-1…AA-36, "MVP"). MVP1 has a **dual purpose**: a
+> **Senior AI Security Engineer portfolio project** *and* a **working personal finance tool
+> the owner uses every week**. The security pillars are the headline; the finance features
+> are both the workload that justifies the platform and a real tool that must work. Written
+> issues-not-stories (per `mvp.md`): each issue is a concrete task with a done-state; the
+> *why* lives in the milestone header. Issue IDs continue from **AA-37** and are stable.
 >
 > **Priority order is unchanged** (CLAUDE.md): data provenance > end-user satisfaction >
 > maintainability > testing > documentation > delivery timelines. Every hard rule still
 > binds: masking-before-LLM, LLM-as-parser-not-oracle, deterministic money math,
-> observations-not-advice, Decimal, RLS, raw parameterized SQL, zero-paid-spend, and
-> **public repo / mock-data-only** (real holdings never enter the repo, CI, or blog).
+> observations-not-advice, Decimal, RLS, raw parameterized SQL, **local-first / near-zero
+> spend** (own hardware is primary; capped cloud burst only), and **public repo /
+> mock-data-only** (real holdings never enter the repo, CI, or blog).
+>
+> **Code review:** CodeRabbit is not used (no review tier). Reviews run via the built-in
+> `/code-review` skill locally and a dedicated reasoning-tier pass (Opus 4.8) per
+> `model-policy.md` — not a SaaS gate.
 
 ## Headline for MVP1
 Two security pillars are the deliverable the portfolio is built around:
@@ -37,8 +43,8 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
 - **AA-37 Land the CI fix + unblock the demo-mode PR** — merge the green CI-repair branch
   (`fix/ci-development-green` / PR #35) after its three cleanups: correct the two overstated
   claims in its description (CI *was* green 5× on 2026-09-02 before the audit gates; the
-  golden-set eval has *never* actually run — the "green" runs skipped it), trigger a
-  CodeRabbit review (undraft or run the CLI gate), and confirm the identity `USDCAD=X`=1.00
+  golden-set eval has *never* actually run — the "green" runs skipped it), run the built-in
+  `/code-review` (CodeRabbit is not used), and confirm the identity `USDCAD=X`=1.00
   test fixture is acceptable vs a realistic 1.35. Then add the 7-line `auth.uid()` stub to
   `tests/db/test_demo_seed_live.py` on `feature/kch-69` so PR #34 (demo mode) goes green.
   done: `development` CI green; #35 and #34 merged. deps: none.
@@ -46,11 +52,22 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   a free Supabase project (run migration 0001), and Vercel Blob; prove a hello-world API
   response and a worker heartbeat row written from a real run. done: the three components
   respond in a deployed environment, not just CI. deps: AA-37.
-- **AA-39 ADR v1.2.0 — cloud-GPU K8s AI tier** — supersede ADR v1.1.0's home-lab compose.
-  Record: frontend + API stay on the Vercel + Supabase **free tiers** (always-up); the AI
-  tier (vLLM + LiteLLM + worker + DCGM + Prometheus/Grafana) runs on **k3s on a free-credit
-  cloud GPU VM**; jobs queue while the VM is off (existing heartbeat/queued UX). Amends A6,
-  A8, A16 (see `assumptions.md`). done: ADR committed, v1.1.0 marked superseded. deps: none.
+- **AA-39 ADR v1.2.0 — local-first compute ladder** — evolves ADR v1.1.0 (home-lab) for the
+  owner's real hardware; **no cloud GPU is the primary**. Frontend + API stay on the Vercel +
+  Supabase **free tiers** (always-up). The AI tier (vLLM + LiteLLM + worker + DCGM +
+  Prometheus/Grafana) is **proven locally first**, then burst to cloud only when a local box
+  can't hold it. The ladder, cheapest-first:
+  1. **Mac (dev)** — Metal LLM via Ollama/mlx-lm; kind/k3d (CPU) for K8s manifest work.
+  2. **Windows + RTX 3060 (local GPU POC)** — single-node k3s with the NVIDIA device plugin:
+     real vLLM, real DCGM metrics, real GPU passthrough → this is where M9 and the M11
+     isolation lab are **proven, at $0**.
+  3. **Modal ($30/mo free credits, owner-set $7.5 cap)** — serverless burst to a bigger GPU
+     (T4/A10) only when the 3060's 12 GB is too small. **Do not run GPU workloads until
+     necessary.**
+  4. **Oracle Cloud Always Free (ARM, 24 GB RAM)** — optional 24/7 CPU-mode host for a
+     quantized model or the always-on worker.
+  Jobs queue while the local box is off (existing heartbeat/queued UX). Amends A6, A8, A16
+  (see `assumptions.md`). done: ADR committed; v1.1.0 marked superseded. deps: none.
 - **AA-40 Port standards + token-economy toolchain + security skills** —
   (a) into `CLAUDE.md`: FinHive's cost-optimised **model-tier table** (Opus=reasoning,
   Sonnet=implementation, Haiku=generation; `IMPL_MODEL`→Sonnet, `MEDIATOR_MODEL`→Opus),
@@ -64,7 +81,9 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   (c) the `/learn` and `/skill-create` commands;
   (d) **vendor** the `AI Security` and `Container Security` skill sets from
   `anthropic-cybersecurity-skills` into `.claude/skills/` (adapted to our rules, not imported
-  blindly) for pillars A and B.
+  blindly) for pillars A and B;
+  (e) **remove the CodeRabbit gate** from `CLAUDE.md` and the AGENT_CONTRACT (no review tier);
+  replace it with the built-in `/code-review` skill + an Opus-4.8 reasoning-tier review.
   done: CLAUDE.md updated; skills present and invocable; `rtk` runs in the dev env. deps: AA-37.
 - **AA-41 Self-improving e2e-testing skill** — upgrade `skills/e2e-testing/SKILL.md` from a
   checklist to the FinHive persona-driven **living regression suite** ("become the test
@@ -72,10 +91,13 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   a **security persona** (prompt-injection, escape attempts, abuse/DoS) and the
   capture-after-release loop so a validated test run becomes a permanent workflow. done: a
   persona run produces findings that convert to committed regression tests. deps: AA-40.
-- **AA-42 Mac dev loop** — LiteLLM routes to a Metal-native OpenAI-compatible server
-  (Ollama or mlx-lm) for app LLM work; K8s manifests/probes/metrics exercised on kind/k3d
-  with a tiny CPU model. done: `litellm` → local model answers; `kind` cluster runs a probe +
-  Prometheus scrape of a stub `/metrics`. deps: AA-40.
+- **AA-42 Local dev + GPU-POC loop** — (Mac) LiteLLM routes to a Metal-native
+  OpenAI-compatible server (Ollama or mlx-lm) for app LLM work; K8s manifests/probes/metrics
+  drafted on kind/k3d (CPU). (Windows + RTX 3060) stand up single-node k3s with the NVIDIA
+  device plugin as the **local GPU POC node** — the target for M9 and the M11 lab. The Groq
+  key for local runs lives in `ops/.env.local` (gitignored; never committed). done: `litellm`
+  → local model answers on the Mac; the 3060 k3s node schedules a GPU pod and exposes
+  `nvidia.com/gpu`. deps: AA-40.
 - **AA-43 Wire the pipeline end to end** — `worker/main.py` job loop runs
   adapters → mask → stage → silver; `rebuild_gold(user_id)` is invoked on confirm; the
   dashboard is reachable from a real upload without the demo seed; holdings valued at market
@@ -112,13 +134,14 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   explicit data-coverage notes. deps: AA-44.
 
 ## M9 — P4: AI tier on Kubernetes + observability
-*Why: the platform the security pillars act on; the AI-infra headline.*
+*Why: the platform the security pillars act on; the AI-infra headline. Proven on the local
+RTX 3060 k3s node first (AA-42); Modal burst only if the model won't fit 12 GB.*
 
-- **AA-49 vLLM + LiteLLM + worker on k3s** (free-credit GPU VM) — `startupProbe` (not
-  readiness alone) on `/health`; PV-backed HF cache; GPU as an extended resource
-  (`requests`==`limits`); nodeSelector + taints/tolerations; resource limits. done: model
-  serves through LiteLLM on the cluster; pod survives restart without re-downloading weights.
-  deps: AA-39, AA-42.
+- **AA-49 vLLM + LiteLLM + worker on k3s** (local RTX 3060 node; Modal burst if needed) —
+  `startupProbe` (not readiness alone) on `/health`; PV-backed HF cache; GPU as an extended
+  resource (`requests`==`limits`); nodeSelector + taints/tolerations; resource limits; a
+  quantized model sized to 12 GB VRAM. done: model serves through LiteLLM on the local
+  cluster; pod survives restart without re-downloading weights. deps: AA-39, AA-42.
 - **AA-50 GPU + LLM observability** — DCGM-exporter DaemonSet + Prometheus + Grafana;
   dashboards for vLLM KV-cache usage, queue depth, throughput, TTFT/TPOT; degrade gracefully
   where consumer-GPU DCGM metrics are absent. done: dashboards populate from a live load.
@@ -132,8 +155,8 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   tool/action the chat can trigger. done: a documented injection corpus is blocked (tests in
   the e2e security persona). deps: AA-45.
 - **AA-52 Cost / rate-limit / DoS** — LiteLLM spend caps + RPM/TPM, upload size/row caps,
-  token-flood guards, queue protection so a prompt loop can't exhaust free GPU credits or
-  wedge the queue. done: abuse cases hit limits, not the wallet. deps: AA-45, AA-49.
+  token-flood guards, queue protection so a prompt loop can't exhaust the Modal credit cap or
+  wedge the local queue. done: abuse cases hit limits, not the wallet. deps: AA-45, AA-49.
 - **AA-53 Output handling** — treat LLM output as untrusted in React (no HTML/markdown
   injection, no code execution, safe chart rendering); verify RLS/JWT tenant isolation holds
   even under manipulation. done: XSS/markdown-injection attempts render inert; cross-user
@@ -149,8 +172,9 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   done: lab runbook + results committed. deps: AA-49.
 - **AA-55 Sandboxed runtime** — run the LLM pod under gVisor or Kata as a second kernel
   boundary; write up the **GPU-passthrough-vs-sandbox tension** (sandboxed runtimes don't
-  cleanly support `/dev/nvidia*`) — the central AI-security tradeoff. done: comparison
-  documented with evidence. deps: AA-54.
+  cleanly support `/dev/nvidia*`) — the central AI-security tradeoff, shown concretely on the
+  RTX 3060 (a consumer GeForce, which also makes the limited-DCGM-metrics point real). done:
+  comparison documented with evidence. deps: AA-54.
 - **AA-56 eBPF runtime detection** — Falco or Tetragon detecting syscall/escape anomalies,
   wired into the Prometheus/Grafana stack from AA-50; the "gotchas" write-up
   (`docs/mvp1/gotchas.md`) for interview prep + the blog. done: an injected escape attempt
@@ -177,7 +201,9 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
 
 ## Out of MVP1
 AA-30 (per-user derived encryption keys), realtime prices, OCR of scanned statements,
-multi-user, and AA-33 (vLLM-on-home-box — obsolete under ADR v1.2.0).
+multi-user, and AA-33 (superseded — vLLM now lands on the local RTX 3060 node per ADR v1.2.0,
+not a dedicated home-lab box). Cloud GPU (Modal/Oracle) is burst/overflow only, reached after
+the local POC, never a prerequisite.
 
 ## Dependency spine
 AA-37 → AA-38 → AA-39/40/41/42 → **AA-43** → (M7 ∥ M9) → M8 → **M10 → M11** → M12 → M13.
@@ -185,6 +211,7 @@ Security pillars (M10, M11) depend on the chatbot (M7) and the AI tier (M9) exis
 
 ## Open inputs
 - **Redacted holdings list** (optional) — sharpens AA-46/AA-48 data-source scoping.
-- **Free-credit GPU availability** — many free trials block GPU quota; until a real
-  instance exists, AA-49/50 and the GPU half of M11 stay *written-but-unproven* (dev on the
-  Mac via kind/k3d on CPU). Tracked as A17 in `assumptions.md`.
+- **GPU is resolved (local-first):** the RTX 3060 box proves M9 + the M11 lab at $0; Modal
+  ($7.5 cap) is burst; Oracle Always Free is an optional 24/7 CPU host. No longer a blocker —
+  see A17 in `assumptions.md`. The only setup gate is standing up k3s + the NVIDIA device
+  plugin on the Windows box (AA-42).

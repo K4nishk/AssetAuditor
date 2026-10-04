@@ -17,7 +17,7 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 ## Now — unblock the trunk (everything inherits red CI until this lands)
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
 |----|------|-----|-------|-------|-------------|--------|
-| AA-37 | Land CI fix: correct the 2 overstated claims in PR #35's body, trigger CodeRabbit, confirm the `USDCAD=X`=1.00 test fixture | P0 | 0.5 | 0.5 | — | todo |
+| AA-37 | Land CI fix: correct the 2 overstated claims in PR #35's body, run `/code-review` (CodeRabbit not used), confirm the `USDCAD=X`=1.00 test fixture | P0 | 0.5 | 0.5 | — | todo |
 | AA-37b | Add the 7-line `auth.uid()` stub to `tests/db/test_demo_seed_live.py` on `feature/kch-69` → unblocks PR #34 | P0 | 0.25 | 0.25 | AA-37 | todo |
 | #36 | Rebase this MVP1-docs PR after #35 merges → green | P2 | — | 0.25 | AA-37 | todo |
 
@@ -25,7 +25,7 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
 |----|------|-----|-------|-------|-------------|--------|
 | EVAL-1 | Open a PR for branch `fix/llm-evals-diagnostics` (commit `3b06d29` already exists) → merge the self-explaining eval (names row+field, publishes score-vs-threshold to the step summary, captures litellm logs on failure) | P1 | 0.25 | 0.5 | AA-37 (green base) | todo |
-| EVAL-2 | Read the now-visible score/field breakdown → fix the real cause (likely a formatting slip: statement's own `3,450.00` into a Decimal field, or `Jul 02` with year only in the header) **or** confirm it's a Groq/model infra issue (401/429/decommissioned id) | P1 | 0.5–1 | 0.5 | EVAL-1 · ⛔ a real CI run with the Groq key | todo |
+| EVAL-2 | Read the now-visible score/field breakdown → fix the real cause (likely a formatting slip: statement's own `3,450.00` into a Decimal field, or `Jul 02` with year only in the header) **or** confirm it's a Groq/model infra issue (401/429/decommissioned id) | P1 | 0.5–1 | 0.5 | EVAL-1 · needs a run with the Groq key (CI secret, or locally via `ops/.env.local`) | todo |
 
 > Eval status, verified: it has **never passed** (the old "green" runs *skipped* the step); there
 > is **no regression to bisect**; the 75% floor is not the cause (a null-everything model still
@@ -36,10 +36,10 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 |----|------|-----|-------|-------|-------------|--------|
 | AA-38 | Deploy rails live: Vercel (frontend + API) + Supabase free project (run migration 0001) + Blob; prove hello-world + a real heartbeat row | P0 | 1–2 | 1 | ⛔ accounts/secrets | todo |
 | AA-43 | **Wire pipeline end-to-end**: worker runs adapters→mask→stage→silver; `rebuild_gold` on confirm; dashboard reachable from a real upload (no demo seed); holdings valued at market | P0 | 2–3 | 1 | AA-38 | todo |
-| AA-39 | ADR v1.2.0 — cloud-GPU k3s AI tier; amends A6/A8/A16 | P1 | 0.5 | — | — | todo |
+| AA-39 | ADR v1.2.0 — local-first compute ladder (Mac → RTX 3060 k3s → Modal burst → Oracle CPU); amends A6/A8/A16 | P1 | 0.5 | — | — | todo |
 | AA-40 | Port standards + token toolchain (caveman-micro prompt, `ponytail` skill, `rtk` proxy) + `/learn` `/skill-create` + vendor AI-Security & Container-Security skills | P1 | 1.5 | 0.5 | — | todo |
 | AA-41 | Self-improving e2e-testing skill: persona-driven living suite + security persona + capture-after-release loop | P1 | 1.5 | 0.5 | AA-40 | todo |
-| AA-42 | Mac dev loop: LiteLLM→Ollama/mlx-lm + kind/k3d CPU with probes/metrics | P1 | 1–2 | 0.5 | AA-40 | todo |
+| AA-42 | Local dev + GPU POC: Mac (LiteLLM→Ollama/mlx-lm, k3d CPU) + Windows RTX 3060 (single-node k3s + NVIDIA device plugin); Groq key in `ops/.env.local` | P1 | 1–2 | 0.5 | AA-40 | todo |
 
 ## M7 — P1 CSV chatbot + full holdings ingestion
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
@@ -57,8 +57,8 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 ## M9 — P4 AI tier on K8s (headline infra)
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
 |----|------|-----|-------|-------|-------------|--------|
-| AA-49 | vLLM + LiteLLM + worker on k3s: `startupProbe`, PV HF cache, GPU extended-resource (`requests`==`limits`), nodeSelector + taints/tolerations | P1 | 2–3 | 2–3 | AA-39/42 · ⛔ free GPU VM (A17) | todo |
-| AA-50 | DCGM-exporter DaemonSet + Prometheus + Grafana; vLLM dashboards (KV-cache, queue, throughput, TTFT/TPOT) | P1 | 2–3 | 1–2 | AA-49 · ⛔ GPU VM | todo |
+| AA-49 | vLLM + LiteLLM + worker on k3s: `startupProbe`, PV HF cache, GPU extended-resource (`requests`==`limits`), nodeSelector + taints/tolerations; quantized model sized to 12 GB | P1 | 2–3 | 2–3 | AA-39/42 · local RTX 3060 (Modal burst if >12 GB) | todo |
+| AA-50 | DCGM-exporter DaemonSet + Prometheus + Grafana; vLLM dashboards (KV-cache, queue, throughput, TTFT/TPOT); degrade where GeForce DCGM metrics absent | P1 | 2–3 | 1–2 | AA-49 · local 3060 | todo |
 
 ## M10 — Security pillar A: secure the chatbot (BUILD, headline)
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
@@ -71,7 +71,7 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
 |----|------|-----|-------|-------|-------------|--------|
 | AA-54 | Baseline hardening manifests + escape-attempt lab (non-root, ro-rootfs, drop caps, seccomp, restricted PSS, default-deny egress) | P1 | 2–3 | 1–2 | AA-49 (baseline on kind) | todo |
-| AA-55 | Sandboxed runtime (gVisor/Kata) + GPU-passthrough-vs-sandbox writeup (the headline gotcha) | P2 | 2–3 | — | AA-54 · ⛔ GPU VM | todo |
+| AA-55 | Sandboxed runtime (gVisor/Kata) + GPU-passthrough-vs-sandbox writeup (the headline gotcha), shown on the RTX 3060 | P2 | 2–3 | — | AA-54 · local 3060 | todo |
 | AA-56 | eBPF detection (Falco/Tetragon) wired into Prometheus/Grafana + `docs/mvp1/gotchas.md` | P2 | 2–3 | 1 | AA-54, AA-50 | todo |
 
 ## M12–M13 — quant + showcase
@@ -90,11 +90,11 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 | **Total** | **≈ 52–70 dev-days** |
 
 **Critical path:** AA-37 → AA-38 → AA-43 → (M7 ∥ M9) → M10 → M11.
-**Clear these external blockers early** (they gate whole milestones):
-1. **Free GPU VM** (A17) — gates M9 and half of M11; many free trials block GPU quota, so validate provider-by-provider before committing those timelines.
+**Clear these setup gates early** (they gate whole milestones):
+1. **Local k3s + NVIDIA device plugin on the Windows RTX 3060** (AA-42) — this is the GPU POC node for M9 and the M11 lab; replaces the old "find a free cloud GPU" blocker (now resolved local-first, A17). Modal ($7.5 cap) is burst only, Oracle Always Free an optional CPU host.
 2. **Vercel + Supabase accounts/secrets** (AA-38) — gate every deployed/wired row.
-3. **A CI run with the Groq key** (EVAL-2) — the eval can't be root-caused without it.
+3. **The Groq key** (EVAL-2) — already in GitHub Actions secrets for CI, and in `ops/.env.local` for local runs; so the eval can be root-caused either way.
 
 > Estimates assume the token-economy doctrine (AA-40) is in place early; without it, build cost
-> runs higher. GPU-dependent rows (AA-49/50, AA-55) stay *written-but-unproven* on the Mac
-> (kind/k3d, CPU) until a real instance exists.
+> runs higher. GPU-dependent rows (AA-49/50, AA-55) are proven on the local RTX 3060; the Mac
+> (k3d, CPU) covers manifest/probe work until the 3060 node is up.

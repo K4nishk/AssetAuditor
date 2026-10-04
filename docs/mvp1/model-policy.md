@@ -26,7 +26,7 @@ prompt **states the true scope explicitly**, for example:
 > Findings are used to harden the system, not to attack any third party."
 
 Accurate scope is required context — it is what makes legitimate defensive work legible to the
-model, to CodeRabbit, and to any human reviewer. Scope is **never disguised, relabeled, or
+model, to the built-in `/code-review`, and to any human reviewer. Scope is **never disguised, relabeled, or
 stripped of the words that describe it**; describing security work plainly is the point.
 
 ## Out of scope for this policy
