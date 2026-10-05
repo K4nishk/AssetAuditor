@@ -28,7 +28,7 @@ import pytest_asyncio
 from app.db.queries.account_lifecycle import purge_user_rows
 from app.db.queries.users_profile import get_profile, upsert_profile
 from app.domain.demo import ALEX_MOCK_PROFILE, DEMO_FIXTURES, DEMO_SNAPSHOT_DATE
-from app.routes.demo import _SILVER_ENTITIES, _seed_one_fixture
+from app.routes.demo import _SILVER_ENTITIES, _seed_demo_fx_rates, _seed_one_fixture
 from worker.gold import rebuild_gold
 from worker.lineage import LineageEmitter
 
@@ -123,6 +123,10 @@ async def test_seed_loads_every_demo_fixture_into_silver_and_rebuilds_gold(seede
     profile = await get_profile(conn, user_id=user_id)
     assert profile["holdings_country"] == "CA"
     assert profile["risk_profile"] == "medium"
+
+    # Same FX seeding the /seed endpoint runs before rebuild_gold, so the demo's
+    # USD/BTC/ETH holdings can be valued in CAD.
+    await _seed_demo_fx_rates(conn, user_id=user_id)
 
     result = await rebuild_gold(
         conn,

@@ -39,15 +39,18 @@ from app.auth import get_current_user_id
 from app.db.pool import rls_connection
 from app.db.queries import bronze_files, etl_jobs, staged_rows
 from app.db.queries.account_lifecycle import purge_user_rows
+from app.db.queries.prices import upsert_price
 from app.db.queries.silver import SilverResolutionError, write_confirmed_rows
 from app.db.queries.users_profile import upsert_profile
 from app.domain.demo import (
     ALEX_MOCK_PROFILE,
     DEMO_FIXTURES,
+    DEMO_FX_RATES,
     DEMO_SNAPSHOT_DATE,
     FIXTURES_SKIPPED,
     DemoFixture,
 )
+from app.domain.prices import CAD, fx_symbol_for_currency
 from app.uploads.blob import BlobStorage, BlobUploadError, bronze_pathname, get_blob_storage
 from worker.gold import rebuild_gold
 from worker.lineage import LineageEmitter, new_run_id
@@ -190,6 +193,36 @@ async def _seed_one_fixture(
     return summary
 
 
+async def _seed_demo_fx_rates(conn: asyncpg.Connection, *, user_id: str) -> None:
+    """Seed a deterministic FX rate into `public.prices` for every non-CAD
+    currency the demo's confirmed holdings are denominated in, so `rebuild_gold`
+    can convert them to CAD. These are fixed demo rates (`DEMO_FX_RATES`), not
+    live market data — real market pricing is AA-21/AA-43. Fails loudly rather
+    than fabricate a rate for a currency the demo does not map.
+    """
+    rows = await conn.fetch(
+        "select distinct currency from public.holdings where user_id = $1",
+        user_id,
+    )
+    for row in rows:
+        currency = (row["currency"] or "").strip().upper()
+        if not currency or currency == CAD:
+            continue
+        rate = DEMO_FX_RATES.get(currency)
+        if rate is None:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                f"demo seed has no FX rate for currency {currency!r}",
+            )
+        await upsert_price(
+            conn,
+            ticker=fx_symbol_for_currency(currency),
+            price_date=DEMO_SNAPSHOT_DATE,
+            close=rate,
+            source="demo-seed",
+        )
+
+
 @router.post("/seed", response_model=DemoSeedOut)
 async def seed_demo_data(
     user_id: str = Depends(get_current_user_id),
@@ -211,6 +244,8 @@ async def seed_demo_data(
         loaded.append(fixture.filename)
 
     await upsert_profile(conn, user_id=user_id, **ALEX_MOCK_PROFILE)
+
+    await _seed_demo_fx_rates(conn, user_id=user_id)
 
     result = await rebuild_gold(
         conn,

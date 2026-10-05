@@ -61,6 +61,18 @@ FIXTURES_SKIPPED: tuple[str, ...] = ("canadalife_rpp.json", "scotiabank_chequing
 # actually runs.
 DEMO_SNAPSHOT_DATE = date(2026, 7, 31)
 
+# Deterministic FX rates (CAD per one unit of the currency) seeded into
+# public.prices for the demo snapshot so rebuild_gold can value non-CAD
+# holdings. These are FIXED demo rates, not live market data — real market
+# pricing is AA-21/AA-43. Only the currencies the demo's holdings are actually
+# denominated in need a rate: USD (Questrade), BTC + ETH (Kraken). moomoo's
+# crypto holdings are already CAD-valued, so they need none.
+DEMO_FX_RATES: dict[str, Decimal] = {
+    "USD": Decimal("1.35"),
+    "BTC": Decimal("90000"),
+    "ETH": Decimal("4500"),
+}
+
 # data/samples/README.md: "Alex Mock", age 29, holdings_country=CA, in Canada
 # since 2019, FHSA opened 2024, risk profile medium, prior-year earned income
 # $82,000. Keys match `app.db.queries.users_profile.upsert_profile`'s kwargs.
