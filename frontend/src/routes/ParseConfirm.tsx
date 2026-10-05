@@ -204,7 +204,7 @@ export default function ParseConfirm() {
                   <Td verticalAlign="top">
                     <VStack align="start" spacing={1}>
                       <Badge colorScheme={row.is_low_confidence ? "orange" : "gray"}>
-                        {METHOD_LABELS[row.method]}
+                        {METHOD_LABELS[row.method] ?? row.method}
                         {row.confidence !== null ? ` · ${Math.round(row.confidence * 100)}%` : ""}
                       </Badge>
                       {row.is_low_confidence && (

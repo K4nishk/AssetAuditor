@@ -6,15 +6,18 @@ import {
   FormLabel,
   Heading,
   Input,
+  Link as ChakraLink,
   Tab,
   TabList,
   TabPanel,
   TabPanels,
   Tabs,
+  Text,
   VStack,
 } from "@chakra-ui/react";
 import { useState } from "react";
 import type { FormEvent } from "react";
+import { Link as RouterLink } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 
@@ -104,6 +107,13 @@ export default function Login() {
           </TabPanel>
         </TabPanels>
       </Tabs>
+      <Text fontSize="sm" color="gray.500" textAlign="center">
+        Curious how this is built?{" "}
+        <ChakraLink as={RouterLink} to="/blog/architecture-story" color="teal.600">
+          Read the architecture story
+        </ChakraLink>
+        .
+      </Text>
     </VStack>
   );
 }

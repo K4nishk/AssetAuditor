@@ -101,12 +101,22 @@ def test_tfsa_withdrawal_is_recredited_the_following_january() -> None:
         RoomEvent(account_type="tfsa", year=2025, kind="contribution", amount=Decimal("1000")),
         RoomEvent(account_type="tfsa", year=2025, kind="withdrawal", amount=Decimal("1000")),
     ]
+    # Control: the same contribution with no withdrawal, so the only variable
+    # between it and `events` above is the recredit this test is proving.
+    events_no_withdrawal = [
+        RoomEvent(account_type="tfsa", year=2025, kind="contribution", amount=Decimal("1000")),
+    ]
 
     result_same_year = compute_rooms(ALEX, events, as_of_year=2025)
     result_next_year = compute_rooms(ALEX, events, as_of_year=2026)
+    result_next_year_no_withdrawal = compute_rooms(ALEX, events_no_withdrawal, as_of_year=2026)
 
     assert result_same_year.tfsa.room_used == Decimal("1000")
     assert result_next_year.tfsa.room_used == Decimal("0")
+    assert (
+        result_next_year.tfsa.room_remaining - result_next_year_no_withdrawal.tfsa.room_remaining
+        == Decimal("1000")
+    )
 
 
 def test_tfsa_cra_override_wins_and_ledger_explains_delta() -> None:

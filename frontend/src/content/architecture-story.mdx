@@ -1,0 +1,97 @@
+import Mermaid from "../components/Mermaid";
+import MockDashboardPreview from "../components/MockDashboardPreview";
+import MockRoomsPreview from "../components/MockRoomsPreview";
+import { INGESTION_SEQUENCE_DIAGRAM, ZERO_COST_SPLIT_DIAGRAM } from "./architectureDiagrams";
+
+# Auditing one person's finances, provenance-first, for $0 a month
+
+AssetAuditor ingests bank, brokerage and crypto statements for a single Canadian
+user, turns them into net-worth dashboards and TFSA/RRSP/FHSA contribution-room
+ledgers, and answers one question honestly for every number it shows: *where did
+this come from?* That question — not the dashboards — is the actual product.
+Everything below follows from taking it seriously.
+
+The build priority, fixed before any code was written, was **data provenance
+over user satisfaction over maintainability over testing over documentation
+over delivery timelines**. Every architectural choice on this page traces back
+to that ordering.
+
+## A cloud half and a home-lab half, both free
+
+The whole system runs on free tiers plus one piece of hardware the owner
+already had: a home GPU box. Nothing here costs money, and the rule (recorded
+as an assumption, not a wish) is that leaving a free tier is a deliberate
+design decision, never a quiet credit-card charge.
+
+<Mermaid title="System split — free-tier cloud vs. home-lab worker" chart={ZERO_COST_SPLIT_DIAGRAM} />
+
+The frontend, API and database live on Vercel and Supabase's free tiers. The
+ETL worker — the part that actually reads a PDF, extracts rows and calls an
+LLM — runs on the owner's own machine instead, polling the job queue over an
+outbound-only connection. If the box is off, uploads still queue; a heartbeat
+row tells the UI to say "queued, will process once your worker is online"
+instead of quietly failing. LiteLLM sits in front of the LLM calls as a
+single gateway, routing to a self-hosted model when the GPU box is up and
+falling back to Groq's free tier, rate-capped well under its limits, when it
+is not.
+
+## Provenance is structural, not bolted on
+
+Every write to the "silver" (cleaned, confirmed) or "gold" (dashboard-ready)
+layer emits a lineage event first. Every number on a dashboard traces back
+through that event to the exact source file, extraction method and
+confirmation timestamp that produced it. This is not an audit log added
+after the fact — the drill-down panel behind every pie slice *is* the
+lineage query, run live.
+
+<Mermaid title="Upload to dashboard — the ingestion pipeline" chart={INGESTION_SEQUENCE_DIAGRAM} />
+
+Two rules make this trustworthy rather than just present. First, account
+numbers and personal identifiers are masked before anything is written to
+silver and before any text reaches an LLM — a third-party model provider
+never sees a real account number. Second, the extraction tier itself is part
+of the record: a row parsed deterministically by a bank-specific adapter and
+a row inferred by a language model both land in the same table, but only one
+of them is flagged for a human to double-check before it is ever trusted.
+
+<MockDashboardPreview />
+
+That dashboard is fed by AA-32's demo-seed button, not a real account — the
+numbers above are the same fixture totals published in
+`data/samples/README.md` for the mock user "Alex Mock." Sign in and use
+"Seed from fixtures" to click through the real screen behind this preview,
+including the drill-down panel on every slice.
+
+## Contribution rooms as a ledger, not a snapshot
+
+TFSA, RRSP and FHSA room is not a single number — it is the running result of
+grants, contributions, withdrawals and the occasional CRA reassessment,
+applied in order. AssetAuditor models it that way: a pure, deterministic
+engine (no LLM anywhere near a dollar figure) walks the ledger and produces
+both the current room and the trail of entries that explain it, so a room
+figure that looks wrong is always one click from the events that produced
+it.
+
+<MockRoomsPreview />
+
+These three figures are the engine's own golden-test numbers, reproduced
+exactly from the mock user's fixture data — the same numbers this project's
+unit tests assert on every run.
+
+## What it actually costs
+
+Vercel Hobby, Supabase's free Postgres, Grafana Cloud's free hosted
+Prometheus, Groq's free LLM tier, and GitHub Actions on a public repo — all
+free by design, not free by accident. The one piece of paid-for hardware is
+the owner's existing GPU box, which would exist whether or not this project
+did. The tradeoff accepted in exchange: ETL availability depends on a home
+machine being turned on, mitigated by the job queue and the heartbeat UX
+above.
+
+---
+
+This page is itself an example of the "everything ships in-repo" rule this
+project follows for content: no external CMS, no hosted blog platform — this
+is an MDX file rendered by the same React app the dashboards live in. The
+full decision record lives in `docs/adr/ADR_v1.1.0.md`, and the day-to-day
+operational picture lives in the repo's `docs/wiki/` notes.

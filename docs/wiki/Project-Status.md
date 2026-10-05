@@ -1,18 +1,39 @@
-# Project status — snapshot 2026-09-03
+# Project status — snapshot 2026-09-04
 
 Written so a session with no prior context can pick up cold. Update it when the picture
 materially changes; do not let it rot into fiction.
 
 ## Where the build is
 
-**30 of 34 queued issues complete. 4 remain:** KCH-66 (AA-29 security pass), KCH-68
-(AA-31 blog), KCH-69 (AA-32 demo mode), KCH-72 (AA-36 pre-ship findings sweep).
+**All 34 queued issues are complete** (`ops/.completed_issues` / `ops/queue.tsv`). The
+2026-09-03 run finished the queue at 19:26. See `ops/logs/NIGHT_REPORT.md` for the full
+run-by-run history and merge order.
 
-Three PRs are open and green — **#28** (KCH-63), **#29** (KCH-64), **#30** (KCH-65).
-Everything below them is merged. Merge bottom-up.
+**One PR is open: #34** (`feature/kch-69` → `development`). It carries the last three
+issues at once — KCH-69 (AA-32 demo mode), KCH-68 (AA-31 blog) and KCH-72 (AA-36 findings
+sweep) — because #32 and #33 were merged into `feature/kch-69` while it had no PR of its
+own to merge into. #28–#31 are already in `development`.
 
 **The kill gate passed.** KCH-50 (AA-15) parsed the text-layer Scotiabank fixture PDF
-into the same rows as its CSV fixture, so the "upload your statements" premise is proven.
+into the same rows as its CSV fixture, so the "upload your statements" premise is proven
+and the tiers above it are worth building.
+
+**Review debt: zero as of this snapshot** (`ops/.review_debt.tsv` does not currently
+exist). Earlier in the build the sweeper settled four outstanding debts clean — PRs #5,
+#6, #7 and #12. Notably PR #7 (KCH-47, masking) had found two real PII-leak bugs: an
+account regex that could not match `Acct# 4821`, and a SIN regex blind to contiguous
+9-digit values. Both were fixed and confirmed.
+
+**Two issues opened out of the final run (2026-09-03), both still open:**
+
+- **KCH-73** — the orchestrator runs from the feature branch it is building, so
+  `e8c1127`'s base-retarget fix was never in the executing copy and KCH-69 lost its PR
+  exactly as KCH-61 had. Also covers a CodeRabbit re-review that cleared a blocking
+  finding on byte-identical code, and an agent escalation destroyed by the next issue's
+  `git clean -fd`.
+- **KCH-74** — `app/routes/demo.py` deletes blob prefixes outside the request
+  transaction, so any rollback leaves rows pointing at deleted objects. Needs an owner
+  decision on the retention scheme **before #34 merges**.
 
 ## The real ceiling
 
@@ -78,12 +99,13 @@ is why the sweeper being dead mattered more than it looked.
 
 ## Cold-start reading order
 
-1. `ops/README.md` — how to run everything, and the five hard-won rules
-2. `CLAUDE.md` — binding conventions, especially the CodeRabbit protocol
-3. [Environment-Gotchas](Environment-Gotchas.md) — the machine's landmines
-4. `docs/adr/ADR_v1.1.0.md` — architecture of record
-5. `ops/logs/NIGHT_REPORT.md` — what shipped and the merge order
-6. `mvp.md` — the issue specs; `data/samples/README.md` — the golden numbers
+1. [Local-Quickstart](Local-Quickstart.md) — running it on this machine
+2. `ops/README.md` — how to run everything, and the five hard-won rules
+3. `CLAUDE.md` — binding conventions, especially the CodeRabbit protocol
+4. [Environment-Gotchas](Environment-Gotchas.md) — the machine's landmines
+5. `docs/adr/ADR_v1.1.0.md` — architecture of record
+6. `ops/logs/NIGHT_REPORT.md` — what shipped and the merge order
+7. `mvp.md` — the issue specs; `data/samples/README.md` — the golden numbers
 
 ## Standing decisions worth not relitigating
 
