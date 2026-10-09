@@ -120,3 +120,17 @@ rate limit, leaving the debt intact.
 
 ## Verification bar for "done"
 Issue's done-state met + unit tests for changed logic + relevant `skills/e2e-testing` flow boxes checkable + lint/type clean + CodeRabbit gate passed or its findings explicitly adjudicated. Fixtures changed? Update `data/samples/README.md` reference totals and the golden tests together, in the same commit.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `K4nishk/AssetAuditor`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles using default label strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
