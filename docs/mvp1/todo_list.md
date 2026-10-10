@@ -57,8 +57,8 @@ blocker (an account, a credit-funded GPU, a secret) that must be cleared before 
 ## M9 — P4 AI tier on K8s (headline infra)
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
 |----|------|-----|-------|-------|-------------|--------|
-| AA-49 | vLLM + LiteLLM + worker on k3s: `startupProbe`, PV HF cache, GPU extended-resource (`requests`==`limits`), nodeSelector + taints/tolerations; quantized model sized to 12 GB | P1 | 2–3 | 2–3 | AA-39/42 · local RTX 3060 (Modal burst if >12 GB) | todo |
-| AA-50 | DCGM-exporter DaemonSet + Prometheus + Grafana; vLLM dashboards (KV-cache, queue, throughput, TTFT/TPOT); degrade where GeForce DCGM metrics absent | P1 | 2–3 | 1–2 | AA-49 · local 3060 | todo |
+| AA-49 | **Superseded** by #39 / AA-60, AA-65, AA-66, AA-71, AA-73 (see `build_plan.md` M9) | — | — | — | — | superseded |
+| AA-50 | **Superseded** by #39 / AA-72 (see `build_plan.md` M9) | — | — | — | — | superseded |
 
 ## M10 — Security pillar A: secure the chatbot (BUILD, headline)
 | ID | Task | Pri | Build | Integ | Depends / ⛔ | Status |
