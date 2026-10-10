@@ -52,7 +52,7 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   a free Supabase project (run migration 0001), and Vercel Blob; prove a hello-world API
   response and a worker heartbeat row written from a real run. done: the three components
   respond in a deployed environment, not just CI. deps: AA-37.
-- **AA-39 ADR v1.2.0 — local-first compute ladder** — evolves ADR v1.1.0 (home-lab) for the
+- **AA-39 ADR v1.3.0 — local-first compute ladder** (renumbered: ADR v1.2.0 is now the sovereign-inference ADR; this one covers only the remaining Modal/Oracle rungs, both treated as Egress) — evolves ADR v1.1.0 (home-lab) for the
   owner's real hardware; **no cloud GPU is the primary**. Frontend + API stay on the Vercel +
   Supabase **free tiers** (always-up). The AI tier (vLLM + LiteLLM + worker + DCGM +
   Prometheus/Grafana) is **proven locally first**, then burst to cloud only when a local box
@@ -133,19 +133,35 @@ prices are never read). **MVP1 therefore begins with wiring and deployment, not 
   "data unavailable", never invented. done: sample portfolio shows overlap + exposures with
   explicit data-coverage notes. deps: AA-44.
 
-## M9 — P4: AI tier on Kubernetes + observability
-*Why: the platform the security pillars act on; the AI-infra headline. Proven on the local
-RTX 3060 k3s node first (AA-42); Modal burst only if the model won't fit 12 GB.*
+## M9 — P4: sovereign AI tier (Local inference, Coded Egress, evals)
+*Why: the platform the security pillars act on, rebuilt by the sovereign-AI interview
+(`docs/vault/50-decisions-log/2026-10-09-sovereign-ai-interview.md`, ADR v1.2.0). Compose runs
+daily on the Box (RTX 3060, ~8 GB free); k3s only for M9/M11 labs.*
 
-- **AA-49 vLLM + LiteLLM + worker on k3s** (local RTX 3060 node; Modal burst if needed) —
-  `startupProbe` (not readiness alone) on `/health`; PV-backed HF cache; GPU as an extended
-  resource (`requests`==`limits`); nodeSelector + taints/tolerations; resource limits; a
-  quantized model sized to 12 GB VRAM. done: model serves through LiteLLM on the local
-  cluster; pod survives restart without re-downloading weights. deps: AA-39, AA-42.
-- **AA-50 GPU + LLM observability** — DCGM-exporter DaemonSet + Prometheus + Grafana;
-  dashboards for vLLM KV-cache usage, queue depth, throughput, TTFT/TPOT; degrade gracefully
-  where consumer-GPU DCGM metrics are absent. done: dashboards populate from a live load.
-  deps: AA-49.
+Specs (GitHub issues, `ready-for-agent`): **#39** Local inference on the Box · **#40** Coded
+Egress fallback · **#41** Deterministic evals + Laya Shadow guard. Tickets are their sub-issues:
+
+| ID | Issue | Ticket | Blocked by |
+|---|---|---|---|
+| AA-59 | #42 | Harden the Golden-set scorer | — |
+| AA-60 | #43 | vLLM on the Box: pinned stack, local groups, preflight | — |
+| AA-61 | #44 | Lineage records the backend that actually served | — |
+| AA-62 | #45 | Failure classes and retry budget | — |
+| AA-63 | #46 | Waiting jobs: migration, exponential backoff, visible reason | — |
+| AA-64 | #47 | Coding and pre-send check | — |
+| AA-65 | #48 | On-demand Golden-set eval on the Box | #42, #43 |
+| AA-66 | #57 | Model spike + config PR (human) | #48 |
+| AA-67 | #49 | Readiness probe, backend choice, early wake | #43, #45, #46 |
+| AA-68 | #50 | Commentary eval: grounding + advice set | #42 |
+| AA-69 | #55 | Coded commentary Egress, enforced caps (ships off) | #49, #47, #50 |
+| AA-70 | #58 | Coded extraction + chain validator + Coded CI eval | #42, #55 |
+| AA-71 | #51 | Bounded requests and page chunking | #43 |
+| AA-72 | #52 | DCGM metrics + Grafana allowlist | #43 |
+| AA-73 | #53 | K8s lab manifests + kubeconform + kind smoke | #43 |
+| AA-74 | #56 | Laya Shadow guard (CPU; needs Box RAM check) | #43, #50 |
+
+These replace the GPU parts of AA-42, all of AA-49 and AA-50, and AA-33. Ticket branches are
+`feature/aa-NN`, stacked on their blocker's branch (or on the top of the docs stack).
 
 ## M10 — Security pillar A: secure the chatbot (BUILD)
 *Why: headline; the LLM ingests untrusted CSV + chat. Uses the vendored AI Security skills (AA-40).*
