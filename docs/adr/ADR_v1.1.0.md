@@ -1,6 +1,7 @@
 # ADR v1.1.0 — Zero-Cost Home-Lab Compute + LiteLLM Router
 
 - **Status:** Proposed (supersedes [ADR v1.0.0](ADR_v1.0.0.md); delta-style — anything not mentioned here is unchanged from v1.0.0)
+- **Amended by:** [ADR v1.2.0](ADR_v1.2.0.md) (2026-10-10) — Decision B's routing (vLLM primary, Groq fallback inside LiteLLM) is replaced by a worker-decided, coded egress fallback; LiteLLM remains the only gateway.
 - **Date:** 2026-08-31
 - **Deciders:** owner + planning agent (CLARIFICATIONS round 1 + follow-up decisions)
 
