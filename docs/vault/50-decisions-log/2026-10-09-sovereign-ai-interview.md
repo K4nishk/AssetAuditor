@@ -183,3 +183,27 @@ These corrections are carried into the specs:
   - unenforced LiteLLM caps;
   - the lineage facet recording an alias instead of the backend.
   The sovereignty claim depends on both.
+
+### Rounds 3–4 — open defaults closed, answered 2026-10-10
+
+The first spec drafts carried ~117 "owner may overturn" defaults. That is far over the
+fan-out contract's limit of 5 per spec (`docs/mvp1/model-policy.md`). Of those, about 12
+were real decisions and the rest were conventions or numbers the spike will measure. The
+real decisions were put to the owner:
+
+| # | Question | Owner's answer |
+|---|---|---|
+| R3.1 | Box status | Docker Desktop GPU works; driver R580 or newer; `GROQ_API_KEY` is a repo secret. **Box RAM unknown**: the hardware is not with the owner. The Box preflight measures it, and Laya on CPU waits on that number. |
+| R3.2 | When may commentary use Egress? | **After its eval passes.** It ships switched off; the owner enables it once the commentary eval passes on coded output. |
+| R3.3 | How much description text is Coded on Egress? | **Every word outside an owner-approved vocabulary** (stricter than "payee names only"). |
+| R3.4 | Golden-set floors | **Zero errors on numbers:** amount, kind, date, balance and account mask at 100%; description may miss one row (87.5%). The single 0.75 overall floor goes. |
+| R4.1 | Waiting jobs | **Small `etl_jobs` migration** (wait reason, next-try time, defer count; six fixed reasons with no values in them), with **exponential backoff** while nothing is reachable (1, 2, 4, 8, 16 and 32 minutes, then every 60) and an early wake when vLLM turns ready. |
+| R4.2 | Shadow-verdict retention | **Reference the card, no copy.** A verdict row holds the commentary card id, the Observation index, the verdict and its probability. It lives and dies with the card (account purge), so no new retention class is needed. |
+| R4.3 | Advice-set labels | **An agent labels ~60 fabricated sentences; the owner spot-checks 10** in the PR. A disagreement means re-checking that whole category. |
+| R4.4 | Remaining defaults | **Accepted.** Conventions (pins, names, metric and enum names, K8s layout) stand as listed and the owner may veto any line. Numeric placeholders (context length, timeouts, KV bytes, CPU limits) are replaced by measured values in one config PR after the spike. |
+
+Settled without a question, because ADR v1.2.0 already decides them:
+- **Commentary still gets a Masking pass** before every call. It is a no-op on facts text,
+  but it keeps "Masking on every call" literally true.
+- **The pre-send check's allowlist grows** to cover the approved vocabulary words and the
+  renderer's exact percentages. That follows from R3.3; the ADR is amended to say so.
