@@ -87,7 +87,7 @@ offline on the fixtures, or computed. Scratch scripts are not committed.
 - LiteLLM 1.104.2 has a `/v1/systemone` endpoint that may front `laya-serve`
   (unverified end to end).
 
-**Egress coding (skeptic: see the "Skeptic re-checks" section below).**
+**Egress coding (skeptic: upheld, with the corrections below).**
 - On the sample statement, coding amounts and balances as `[A01]`-style codes round-trips
   16/16 values exactly. With local balance-chain checks, the decoded rows matched the
   deterministic parser.
@@ -103,8 +103,8 @@ offline on the fixtures, or computed. Scratch scripts are not committed.
 - A deny-by-default pre-send check blocked 13 of 13 leak cases. It also blocked benign digits
   (page numbers, years, times) until they were allowlisted.
 
-**LiteLLM (skeptic: see the "Skeptic re-checks" section below).** Read from litellm 1.104.2
-source. The deployed `main-stable` tag's version is unknown.
+**LiteLLM (skeptic: upheld).** Read from litellm 1.104.2 source. The skeptic matched image
+digests: `main-stable` is currently the same image as `v1.104.2`, but the tag moves.
 - The `rpm`/`tpm` values in `llm/litellm.config.yaml` act only as routing weights unless
   `enforce_model_rate_limits` is enabled, so the zero-cost caps are not enforced today.
 - The proxy overwrites `response.model` with the requested alias, so the
@@ -114,7 +114,7 @@ source. The deployed `main-stable` tag's version is unknown.
 - `/health` makes real completion calls, so probing a group that contains Groq spends quota.
 - Retries compound: the openai SDK's 2 retries multiply the router's 2.
 
-**VRAM (skeptic: see the "Skeptic re-checks" section below).**
+**VRAM (skeptic: upheld, with the corrections below).**
 - vLLM 0.31.0 takes `gpu_memory_utilization` as a fraction of total memory and aborts at
   start-up if free memory is below it.
 - With ~8 GB free on a 12 GB card, about 0.55 is safe (hard ceiling ~0.62).
@@ -128,6 +128,35 @@ source. The deployed `main-stable` tag's version is unknown.
   - Qwen3.5-4B;
   - Qwen2.5-7B-Instruct-AWQ, as a quality baseline with no context headroom.
 - Llama-3.1-8B-AWQ leaves too little KV cache to be useful.
+
+### Skeptic re-checks (re-run 2026-10-10)
+
+These corrections are carried into the specs:
+- **Coding is new code.** `worker/masking.py` is irreversible, so coding is a new step on
+  top of it, and masking still runs before every call.
+- **Column cues need no masking change.** pdfplumber's extracted tables already keep
+  separate withdrawn and deposited cells, so the debit/credit cue survives without layout
+  mode.
+- **The worker must set debit/credit itself.** It must apply the balance-chain-derived kind
+  before building drafts; `_to_draft` does not do this today.
+- **The pre-send check had holes.** It let through any code-shaped token (including unknown
+  codes), any ISO-date-shaped string, and any account-mask slug. It must allow only codes
+  in the current map, real calendar dates and the statement's own institution slug.
+- **Harvested deny-terms over-block.** `Sample` from the fixture address matches the
+  `SAMPLE FIXTURE` footer, so the coded extractor payload for this fixture is blocked.
+- **Commentary percentages still reveal scale.** With one known anchor figure, each coded
+  amount can be reconstructed to about ±$300 (±0.05 points of total assets).
+- **vLLM corrections:**
+  - online FP8 needs `--quantization fp8_per_tensor`; plain `fp8` fails at start-up;
+  - Gemma-3-4B-it at 4-bit is a viable alternate candidate;
+  - the 7B baseline is fragile if the card reports ~11.76 GiB total;
+  - pin `--kv-cache-memory-bytes`, because desktop VRAM changes during start-up mis-size
+    the KV cache;
+  - the compose service needs `ipc: host` or `shm_size`.
+- **LiteLLM corrections:**
+  - error responses carry `x-litellm-model-name`;
+  - LiteLLM can front a vLLM-served classifier via `/vllm/{endpoint}`, but Laya's custom
+    head rules out vLLM, so its route is `laya-serve`, possibly via `/v1/systemone`.
 
 ### Round 2 — answered 2026-10-10
 

@@ -47,10 +47,12 @@ The flow:
 1. The worker uses the local group when vLLM reports ready.
 2. When vLLM is unreachable, or stays busy past the retry budget, the worker may use the
    egress group, but only with a Coded payload:
-   - amounts and payee names are replaced by codes;
+   - Masking still runs first, on every call, local or egress;
+   - amounts and payee names are replaced by codes (new reversible code);
    - the code map lives only in worker memory;
    - a no-plaintext check runs immediately before each egress send, and a failed check
-     blocks the send.
+     blocks the send. It admits only codes present in the current map, real calendar dates,
+     and the account-mask format of the statement's own institution.
 3. Decoded output passes deterministic validation (for extraction, the running-balance
    chain) before it is staged.
 4. Every call records the backend actually used and whether the payload was Coded. This is
@@ -90,9 +92,15 @@ The flow:
 - **The pre-send check can refuse a statement.** It denies by default, and a refused job
   waits in the queue for the Local backend.
 
+- **Commentary percentages still reveal scale.** With one known anchor figure (a property
+  value, say), each coded amount can be reconstructed to within about ±$300.
+
 **Rejected:**
 - **Router fallback with coding on every call:** the Local backend would also lose the
   numbers.
+- **Coding only the Groq-bound copy inside LiteLLM:** a deployment-level hook makes this
+  possible, but the code map, prompt rewriting and decoding would then live in the proxy,
+  outside the worker's tests.
 - **No fallback:** the owner wants one.
 - **A FinHive-style FastAPI gateway:** LiteLLM covers it.
 - **Laya as the Golden-set judge:** strictly worse than exact match.
