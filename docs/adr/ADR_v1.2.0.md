@@ -52,7 +52,9 @@ The flow:
    - the code map lives only in worker memory;
    - a no-plaintext check runs immediately before each egress send, and a failed check
      blocks the send. It admits only codes present in the current map, real calendar dates,
-     and the account-mask format of the statement's own institution.
+     the account-mask format of the statement's own institution, words from the
+     owner-approved vocabulary, and the exact percentages the commentary renderer produced.
+     Every other description word is Coded (R3.3).
 3. Decoded output passes deterministic validation (for extraction, the running-balance
    chain) before it is staged.
 4. Every call records the backend actually used and whether the payload was Coded. This is
