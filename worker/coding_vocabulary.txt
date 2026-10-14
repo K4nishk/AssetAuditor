@@ -1,0 +1,71 @@
+# Words that may leave the Box in plain text on Egress (ADR v1.2.0 §3; owner
+# decision R3.3). Every other word in a statement or commentary payload is
+# Coded before it is sent; the pre-send check blocks any word not listed here.
+# One word per line, matched case-insensitively. Changes need owner review.
+#
+# Deliberately absent: payroll, mortgage, institution and merchant names,
+# product names, people, places. Those are what Coding exists to hide.
+
+# Statement layout and column headers
+account
+statement
+period
+customer
+date
+description
+withdrawn
+deposited
+balance
+opening
+closing
+total
+totals
+# Transaction mechanics
+debit
+debits
+credit
+credits
+deposit
+deposits
+withdrawal
+withdrawals
+transfer
+e-transfer
+fee
+fees
+interest
+payment
+pmt
+purchase
+refund
+reversal
+atm
+pos
+cheque
+chequing
+savings
+misc
+# Connectors
+of
+to
+from
+and
+the
+for
+by
+# Currency
+cad
+usd
+# Commentary renderer (app.domain.audit_commentary.render_facts_for_prompt)
+as
+assets
+liabilities
+net
+worth
+term
+buckets
+diversification
+institution
+short_term
+medium_term
+long_term
