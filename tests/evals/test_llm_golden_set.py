@@ -1,5 +1,5 @@
-"""Golden-set eval for the LLM fallback tier (KCH-51 / AA-16) — a real call
-through LiteLLM (Groq today, vLLM once AA-33 promotes it).
+"""Golden-set eval for the LLM fallback tier (KCH-51 / AA-16, scorer AA-59) — a
+real call through LiteLLM (Groq today, vLLM once AA-60 adds the local groups).
 
 Only runs when `LITELLM_BASE_URL` is set. `.github/workflows/ci.yml`'s
 `pytest -v` never sets it, so this collects there and auto-skips instead of
@@ -7,23 +7,27 @@ failing every PR on a live network dependency; `.github/workflows/llm-evals.yml`
 starts a real LiteLLM container against the `GROQ_API_KEY`/`LITELLM_MASTER_KEY`
 repo secrets and sets it, so it actually runs there. Input is the fabricated
 `data/samples/` fixture — never real user data.
+
+Scoring is `tests.evals.scorer` (deterministic, strict on numbers). The model's
+raw JSON is recorded through a wrapping client, so a response the production
+parser refuses still gets a per-field report instead of an opaque error, and
+the run fails because the worker would not stage it.
 """
 
 from __future__ import annotations
 
+import json
 import os
+from types import SimpleNamespace
+from typing import Any
 
+import openai
 import pytest
 
 from tests.evals.golden_set import PDF_FIXTURE, golden_chequing_rows
-from worker.extract.llm_tier import extract_transactions
+from tests.evals.scorer import observed_rows_from_content, score
+from worker.extract.llm_tier import LlmExtractionError, extract_transactions
 from worker.extract.pdfplumber_tier import extract as extract_pdf
-
-MIN_FIELD_ACCURACY = 0.75
-
-# Fields scored per row. Keep in step with `checks` below — the missing/extra-row
-# penalty multiplies by this, so drift here silently rescales the denominator.
-FIELDS_PER_ROW = 6
 
 pytestmark = [
     pytest.mark.llm_eval,
@@ -34,40 +38,43 @@ pytestmark = [
 ]
 
 
+class _RecordingClient:
+    """Delegates to a real OpenAI client and keeps each response's raw content.
+
+    Exposes the inner `base_url`, so the tier's endpoint allowlist still checks it.
+    """
+
+    def __init__(self, inner: openai.OpenAI) -> None:
+        self.base_url = inner.base_url
+        self.contents: list[str | None] = []
+        self._inner = inner
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs: Any) -> Any:
+        response = self._inner.chat.completions.create(**kwargs)
+        self.contents.append(response.choices[0].message.content if response.choices else None)
+        return response
+
+
 def test_scotiabank_statement_golden_set() -> None:
-    extracted = extract_pdf(PDF_FIXTURE.read_bytes())
-    result = extract_transactions(extracted.text, institution_slug="scotia")
-    golden = golden_chequing_rows()
-
-    assert result.drafts, "LLM tier returned no transaction drafts for the golden-set input"
-
-    matched = 0
-    total_checks = 0
-    for expected, draft in zip(golden, result.drafts, strict=False):
-        payload = draft.payload
-        checks = [
-            str(payload.get("occurred_at", "")).startswith(expected.date),
-            payload.get("kind") == expected.kind,
-            payload.get("amount") == expected.amount,
-            payload.get("balance_after") == expected.balance_after,
-            # Case/whitespace are the model's to vary; the merchant text is not.
-            str(payload.get("description", "")).strip().casefold()
-            == expected.description.strip().casefold(),
-            # The mask is what ties a row to an account — a wrong one misfiles the
-            # transaction entirely, so it is scored, not assumed.
-            payload.get("account_mask") == expected.account_mask,
-        ]
-        assert len(checks) == FIELDS_PER_ROW
-        matched += sum(checks)
-        total_checks += len(checks)
-
-    # Rows the model missed or invented entirely still count against accuracy,
-    # rather than silently shrinking the denominator.
-    total_checks += abs(len(golden) - len(result.drafts)) * FIELDS_PER_ROW
-    accuracy = matched / total_checks if total_checks else 0.0
-
-    print(f"golden-set field accuracy: {accuracy:.2%} ({matched}/{total_checks})")
-    assert accuracy >= MIN_FIELD_ACCURACY, (
-        f"LLM extraction field accuracy {accuracy:.2%} fell below the "
-        f"{MIN_FIELD_ACCURACY:.0%} floor for the Scotiabank golden set"
+    client = _RecordingClient(
+        openai.OpenAI(
+            base_url=os.environ["LITELLM_BASE_URL"],
+            api_key=os.environ.get("LITELLM_API_KEY", "sk-litellm-placeholder"),
+        )
     )
+    extracted = extract_pdf(PDF_FIXTURE.read_bytes())
+    try:
+        extract_transactions(extracted.text, institution_slug="scotia", client=client)
+        accepted = True
+    except LlmExtractionError:
+        accepted = False
+
+    observed = observed_rows_from_content(client.contents[-1] if client.contents else None)
+    report = score(
+        golden_chequing_rows(), observed, institution_slug="scotia", production_accepted=accepted
+    )
+
+    # Indexes, field names and reasons only — safe to print in a CI log.
+    print("golden-set report:", json.dumps(report.to_dict(), sort_keys=True))
+    assert report.passed, "golden set failed: " + "; ".join(report.failures())
