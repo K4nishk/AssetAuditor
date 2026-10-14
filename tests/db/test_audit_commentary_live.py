@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import asyncpg
@@ -72,13 +73,33 @@ class _FakeChoice:
 @dataclass
 class _FakeResponse:
     choices: list[_FakeChoice]
-    model: str = "groq/llama-3.3-70b-versatile"
+    # LiteLLM v1.104.2 overwrites `model` with the requested alias; the deployment
+    # that actually served the call travels only in the `x-litellm-model-name` header.
+    model: str = "commentary"
+
+
+@dataclass
+class _FakeRaw:
+    headers: dict[str, str]
+    response: _FakeResponse
+
+    def parse(self) -> _FakeResponse:
+        return self.response
 
 
 @dataclass
 class _FakeCompletions:
     response: _FakeResponse | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
+    headers: dict[str, str] = field(
+        default_factory=lambda: {"x-litellm-model-name": "groq/llama-3.3-70b-versatile"}
+    )
+
+    def __post_init__(self) -> None:
+        self.with_raw_response = SimpleNamespace(create=self._create_raw)
+
+    def _create_raw(self, **kwargs: Any) -> _FakeRaw:
+        return _FakeRaw(headers=self.headers, response=self.create(**kwargs))
 
     def create(self, **kwargs: Any) -> _FakeResponse:
         self.calls.append(kwargs)
