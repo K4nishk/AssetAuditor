@@ -41,3 +41,4 @@ dist/
 
 # build artifacts
 *.tsbuildinfo
+frontend/vite.config.js
