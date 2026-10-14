@@ -21,6 +21,8 @@ from worker.queue import claim_next_job, count_queued_jobs, release_job
 
 MIGRATION_SQL = Path("app/db/migrations/0001_init.sql").read_text()
 MIGRATION_SQL_LOCAL = MIGRATION_SQL.replace("create extension if not exists pgsodium;\n", "")
+# The claim reads 0005's `not_before` (AA-63), so the queue needs both.
+MIGRATION_0005_SQL = Path("app/db/migrations/0005_etl_jobs_waiting.sql").read_text()
 
 AUTH_STUB_SQL = """
 create schema auth;
@@ -52,6 +54,7 @@ async def seeded_db(pg_cluster, scratch_database):
     try:
         await admin.execute(AUTH_STUB_SQL)
         await admin.execute(MIGRATION_SQL_LOCAL)
+        await admin.execute(MIGRATION_0005_SQL)
 
         user_id = uuid.uuid4()
         await admin.execute("insert into auth.users (id) values ($1)", user_id)

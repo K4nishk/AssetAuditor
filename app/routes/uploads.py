@@ -81,6 +81,9 @@ class UploadStatusResponse(BaseModel):
     # (worker_online/message stop being the relevant question at that point).
     worker_online: bool | None = None
     message: str | None = None
+    # AA-63: why a pending job is waiting (a fixed code, never a value); None
+    # when it isn't waiting. `message` carries the reason's fixed text.
+    wait_reason: str | None = None
 
 
 @router.post("", response_model=RegisterUploadResponse)
@@ -233,6 +236,7 @@ async def upload_status(
         queue_state = describe_queue_state(
             last_beat_at=heartbeat["last_beat_at"] if heartbeat is not None else None,
             now=datetime.now(UTC),
+            wait_reason=job["wait_reason"],
         )
         worker_online = queue_state.worker_online
         message = queue_state.message
@@ -243,4 +247,5 @@ async def upload_status(
         error=job["error"],
         worker_online=worker_online,
         message=message,
+        wait_reason=job["wait_reason"],
     )
