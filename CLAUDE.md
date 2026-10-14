@@ -7,7 +7,7 @@ data provenance > end-user satisfaction > code maintainability+quality > testing
 
 ## Read-first map (cheapest sufficient context)
 - Building a feature → its issue in `mvp.md` (IDs `AA-n`) + the one vault note it links.
-- Architecture question → `docs/adr/ADR_v1.1.0.md` (current: home-lab GPU-box worker + LiteLLM router; v1.0.0 superseded, v2.0.0 rejected — don't implement either).
+- Architecture question → `docs/adr/ADR_v1.1.0.md` (home-lab GPU-box worker + LiteLLM router) as amended by `docs/adr/ADR_v1.2.0.md` (sovereign inference: worker-decided, coded egress); v1.0.0 superseded, v2.0.0 rejected — don't implement either. Domain terms → `GLOSSARY.md`.
 - Domain math → `docs/vault/20-domain/Contribution-Rooms.md`; golden test numbers in `data/samples/README.md`.
 - Parser/adapter work → `data/samples/` fixtures are the contract; `docs/vault/40-research/PDF-Statement-Parsing.md` for the tier strategy.
 - Testing → `skills/e2e-testing/SKILL.md`.
@@ -120,3 +120,17 @@ rate limit, leaving the debt intact.
 
 ## Verification bar for "done"
 Issue's done-state met + unit tests for changed logic + relevant `skills/e2e-testing` flow boxes checkable + lint/type clean + CodeRabbit gate passed or its findings explicitly adjudicated. Fixtures changed? Update `data/samples/README.md` reference totals and the golden tests together, in the same commit.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `K4nishk/AssetAuditor`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles using default label strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
