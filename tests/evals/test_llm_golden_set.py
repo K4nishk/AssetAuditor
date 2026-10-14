@@ -41,19 +41,35 @@ pytestmark = [
 class _RecordingClient:
     """Delegates to a real OpenAI client and keeps each response's raw content.
 
-    Exposes the inner `base_url`, so the tier's endpoint allowlist still checks it.
+    Exposes the inner `base_url`, so the tier's endpoint allowlist still checks
+    it, and wraps both `create` and `with_raw_response.create` so it works
+    whichever call style the tier uses (AA-61 reads the backend header through
+    the raw-response API).
     """
 
     def __init__(self, inner: openai.OpenAI) -> None:
         self.base_url = inner.base_url
         self.contents: list[str | None] = []
         self._inner = inner
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        self.chat = SimpleNamespace(
+            completions=SimpleNamespace(
+                create=self._create,
+                with_raw_response=SimpleNamespace(create=self._create_raw),
+            )
+        )
+
+    def _record(self, response: Any) -> None:
+        self.contents.append(response.choices[0].message.content if response.choices else None)
 
     def _create(self, **kwargs: Any) -> Any:
         response = self._inner.chat.completions.create(**kwargs)
-        self.contents.append(response.choices[0].message.content if response.choices else None)
+        self._record(response)
         return response
+
+    def _create_raw(self, **kwargs: Any) -> Any:
+        raw = self._inner.chat.completions.with_raw_response.create(**kwargs)
+        self._record(raw.parse())
+        return raw
 
 
 def test_scotiabank_statement_golden_set() -> None:
