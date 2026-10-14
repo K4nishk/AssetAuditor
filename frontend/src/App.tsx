@@ -1,11 +1,20 @@
 import { Button, Center, Heading, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useCallback, useEffect, useState } from "react";
-import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Link as RouterLink,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ApiError } from "./lib/api";
 import { type ProfileOut, getProfile } from "./lib/profileApi";
+import Blog from "./routes/Blog";
 import Dashboard from "./routes/Dashboard";
+import DemoSeedButton from "./routes/DemoSeedButton";
 import Login from "./routes/Login";
 import ManualEntryAccountBalance from "./routes/ManualEntryAccountBalance";
 import ManualEntryPortfolio from "./routes/ManualEntryPortfolio";
@@ -47,6 +56,10 @@ function AuthenticatedShell({
       <Button size="sm" onClick={() => void signOut()}>
         Log out
       </Button>
+      <DemoSeedButton />
+      <Button as={RouterLink} to="/blog/architecture-story" size="sm" variant="ghost">
+        Read the architecture story
+      </Button>
     </VStack>
   );
 }
@@ -56,6 +69,7 @@ function AuthenticatedShell({
 // onboarding form (wireframe v1 screen 1) instead until one is saved. Also
 // doubles as the "edit profile" screen — same form, pre-filled.
 function Home() {
+  const { signOut } = useAuth();
   const [profile, setProfile] = useState<ProfileOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -92,7 +106,15 @@ function Home() {
   if (error) {
     return (
       <Center h="100vh">
-        <Text color="red.500">{error}</Text>
+        <VStack spacing={3}>
+          <Text color="red.500">{error}</Text>
+          <Button size="sm" onClick={() => void load()}>
+            Try again
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void signOut()}>
+            Log out
+          </Button>
+        </VStack>
       </Center>
     );
   }
@@ -120,6 +142,7 @@ function Home() {
 function RoomsRoute() {
   const [profile, setProfile] = useState<ProfileOut | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,8 +150,17 @@ function RoomsRoute() {
       .then((loaded) => {
         if (!cancelled) setProfile(loaded);
       })
-      .catch(() => {
-        if (!cancelled) setProfile(null);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Only a 404 (no profile yet) means "genuinely ineligible" — any other
+        // failure (network blip, expired session) is transient and must not be
+        // read as "not eligible for rooms", which silently bounced the user to
+        // `/` and threw away the reason why.
+        if (err instanceof ApiError && err.status === 404) {
+          setProfile(null);
+        } else {
+          setError(err instanceof ApiError ? err.message : "failed to load profile");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -146,6 +178,14 @@ function RoomsRoute() {
     );
   }
 
+  if (error) {
+    return (
+      <Center h="100vh">
+        <Text color="red.500">{error}</Text>
+      </Center>
+    );
+  }
+
   if (!profile?.shows_room_widgets) {
     return <Navigate to="/" replace />;
   }
@@ -153,8 +193,26 @@ function RoomsRoute() {
   return <Rooms />;
 }
 
+// The blog is checked before the auth gate below (mvp.md AA-31: an
+// architecture showcase has to be reachable by someone who has not signed
+// up yet). Everything else in this app requires a session, so this is the
+// one exception rather than a generic "public routes" mechanism.
+function BlogRoutes() {
+  return (
+    <Routes>
+      <Route path="/blog/architecture-story" element={<Blog />} />
+      <Route path="/blog/*" element={<Navigate to="/blog/architecture-story" replace />} />
+    </Routes>
+  );
+}
+
 function AppRoutes() {
   const { session, loading } = useAuth();
+  const location = useLocation();
+
+  if (location.pathname.startsWith("/blog/")) {
+    return <BlogRoutes />;
+  }
 
   if (loading) {
     return (

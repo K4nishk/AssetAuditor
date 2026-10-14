@@ -37,6 +37,15 @@ def test_referenced_paths_exist():
     assert not missing, f"CLAUDE.md references paths that don't exist: {missing}"
 
 
+def test_referenced_paths_are_actually_mentioned_in_claude_md():
+    text = _text()
+    unmentioned = [p for p in REFERENCED_PATHS if p not in text]
+    assert not unmentioned, (
+        f"REFERENCED_PATHS lists a path CLAUDE.md's own text never mentions "
+        f"(so the read-first map and this list have drifted apart): {unmentioned}"
+    )
+
+
 def test_defines_priority_order():
     text = _text()
     assert "data provenance" in text

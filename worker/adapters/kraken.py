@@ -70,7 +70,12 @@ def parse(raw: bytes) -> list[StagedRowDraft]:
                 entity="transaction",
                 payload={
                     "account_mask": _DEFAULT_ACCOUNT_MASK,
-                    "ticker": asset,
+                    # Fiat (CAD/USD) movements are cash flow, not security trades, so they
+                    # carry no holding ticker — otherwise silver's write_confirmed_rows,
+                    # which requires every ticker'd transaction to resolve to a holding,
+                    # rejects them (the adapter deliberately emits no holding for fiat).
+                    # `currency` below still records the fiat denomination.
+                    "ticker": None if asset in _NON_HOLDING_ASSETS else asset,
                     "kind": row["type"].strip().lower(),
                     "amount": amount,
                     "currency": asset,
