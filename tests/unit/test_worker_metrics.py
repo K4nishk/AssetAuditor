@@ -140,3 +140,13 @@ def test_record_llm_tokens_from_response_skips_when_usage_is_missing():
 
     after = _counter_value(metrics.LLM_TOKENS_TOTAL, backend="groq")
     assert after == before
+
+
+def test_llm_backend_label_is_clamped_to_its_enum() -> None:
+    # AA-61 (#44): an unexpected provider string must not mint a new label value.
+    before = metrics.LLM_REQUESTS_TOTAL.labels(outcome="success", backend="unknown")._value.get()
+    metrics.record_llm_request(outcome="success", backend="some-new-provider")
+    after = metrics.LLM_REQUESTS_TOTAL.labels(outcome="success", backend="unknown")._value.get()
+    assert after == before + 1
+    labels = {s.labels["backend"] for m in metrics.LLM_REQUESTS_TOTAL.collect() for s in m.samples}
+    assert "some-new-provider" not in labels
