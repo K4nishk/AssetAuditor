@@ -85,8 +85,10 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         run: uv sync --frozen
 
-      # Same Groq-only config the worker box runs (llm/litellm.config.yaml) —
-      # the eval exercises the real routing config, not a stand-in.
+      # Same config and pinned image the worker box runs (llm/litellm.config.yaml,
+      # worker/docker-compose.yml) — the eval exercises the real routing config,
+      # not a stand-in. Its `-local` groups point at the Box's vLLM, which the
+      # eval never calls.
       - name: Start LiteLLM router
         if: steps.check.outputs.configured == 'true'
         env:
@@ -97,7 +99,7 @@ jobs:
             -v "${{ github.workspace }}/llm/litellm.config.yaml:/app/config.yaml:ro" \
             -e GROQ_API_KEY \
             -e LITELLM_MASTER_KEY \
-            ghcr.io/berriai/litellm:main-stable \
+            ghcr.io/berriai/litellm:v1.104.2@sha256:3d88bd757134a00e8c00237b85a021ab1f6d54abb9c1df750f411dbe7256a500 \
             --config /app/config.yaml --port 4000
 
           for _ in $(seq 1 30); do
