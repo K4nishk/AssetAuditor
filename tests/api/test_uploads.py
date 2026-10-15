@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user_id
+from app.domain.worker_status import WAIT_REASON_MESSAGES
 from app.main import app
 from app.routes import uploads as uploads_module
 from app.uploads.blob import BlobUploadError
@@ -311,7 +312,16 @@ BRONZE_FILE_ID = "00000000-0000-0000-0000-0000000000aa"
 
 
 def test_upload_status_returns_the_jobs_current_state():
-    _override_conn([{"bronze_file_id": BRONZE_FILE_ID, "status": "parsing", "error": None}])
+    _override_conn(
+        [
+            {
+                "bronze_file_id": BRONZE_FILE_ID,
+                "status": "parsing",
+                "error": None,
+                "wait_reason": None,
+            }
+        ]
+    )
 
     response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
 
@@ -322,6 +332,7 @@ def test_upload_status_returns_the_jobs_current_state():
         "error": None,
         "worker_online": None,
         "message": None,
+        "wait_reason": None,
     }
 
 
@@ -329,7 +340,12 @@ def test_upload_status_reports_worker_online_for_a_pending_job_with_a_fresh_hear
     fresh = datetime.now(UTC) - timedelta(seconds=5)
     _override_conn(
         [
-            {"bronze_file_id": BRONZE_FILE_ID, "status": "pending", "error": None},
+            {
+                "bronze_file_id": BRONZE_FILE_ID,
+                "status": "pending",
+                "error": None,
+                "wait_reason": None,
+            },
             {"id": 1, "last_beat_at": fresh, "status": "online"},
         ]
     )
@@ -347,7 +363,12 @@ def test_upload_status_reports_worker_offline_for_a_pending_job_with_a_stale_hea
     stale = datetime.now(UTC) - timedelta(hours=3)
     _override_conn(
         [
-            {"bronze_file_id": BRONZE_FILE_ID, "status": "pending", "error": None},
+            {
+                "bronze_file_id": BRONZE_FILE_ID,
+                "status": "pending",
+                "error": None,
+                "wait_reason": None,
+            },
             {"id": 1, "last_beat_at": stale, "status": "online"},
         ]
     )
@@ -363,7 +384,12 @@ def test_upload_status_reports_worker_offline_for_a_pending_job_with_a_stale_hea
 def test_upload_status_reports_worker_offline_when_no_heartbeat_row_exists_yet():
     _override_conn(
         [
-            {"bronze_file_id": BRONZE_FILE_ID, "status": "pending", "error": None},
+            {
+                "bronze_file_id": BRONZE_FILE_ID,
+                "status": "pending",
+                "error": None,
+                "wait_reason": None,
+            },
             None,
         ]
     )
@@ -372,6 +398,52 @@ def test_upload_status_reports_worker_offline_when_no_heartbeat_row_exists_yet()
 
     assert response.status_code == 200
     body = response.json()
+    assert body["worker_online"] is False
+    assert body["message"] == "queued — will process when your worker is online"
+
+
+def test_upload_status_reports_a_waiting_jobs_reason_and_fixed_text():
+    fresh = datetime.now(UTC) - timedelta(seconds=5)
+    _override_conn(
+        [
+            {
+                "bronze_file_id": BRONZE_FILE_ID,
+                "status": "pending",
+                "error": None,
+                "wait_reason": "local_not_ready",
+            },
+            {"id": 1, "last_beat_at": fresh, "status": "online"},
+        ]
+    )
+
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["wait_reason"] == "local_not_ready"
+    assert body["worker_online"] is True
+    assert body["message"] == WAIT_REASON_MESSAGES["local_not_ready"]
+
+
+def test_upload_status_offline_text_wins_over_a_wait_reason():
+    stale = datetime.now(UTC) - timedelta(hours=3)
+    _override_conn(
+        [
+            {
+                "bronze_file_id": BRONZE_FILE_ID,
+                "status": "pending",
+                "error": None,
+                "wait_reason": "egress_unavailable",
+            },
+            {"id": 1, "last_beat_at": stale, "status": "online"},
+        ]
+    )
+
+    response = client.get(f"/api/uploads/{BRONZE_FILE_ID}/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["wait_reason"] == "egress_unavailable"
     assert body["worker_online"] is False
     assert body["message"] == "queued — will process when your worker is online"
 
