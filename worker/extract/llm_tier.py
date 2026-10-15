@@ -37,6 +37,7 @@ from worker.adapters.base import (
     require_decimal,
     to_datetime_utc,
 )
+from worker.llm_backend import backend_from_error, backend_from_headers
 from worker.masking import mask_statement_text
 
 MODEL_GROUP = "extractor"
@@ -145,9 +146,7 @@ class LlmExtractionResult:
     extraction_backend: str
 
 
-def lineage_facets(
-    result: LlmExtractionResult, *, user_confirmed: bool = False
-) -> dict[str, Any]:
+def lineage_facets(result: LlmExtractionResult, *, user_confirmed: bool = False) -> dict[str, Any]:
     """Facet payload for `worker.lineage.LineageEmitter` calls wrapping this tier.
 
     `extraction_backend` is the provenance detail ADR v1.1.0 §3 calls for —
@@ -251,9 +250,9 @@ def extract_transactions(
     masked_text = mask_statement_text(raw_text, institution_slug)
     active_client = _resolve_client(client)
 
-    response = None
+    backend = "unknown"
     try:
-        response = active_client.chat.completions.create(
+        raw = active_client.chat.completions.with_raw_response.create(
             model=MODEL_GROUP,
             temperature=0,
             messages=[
@@ -269,6 +268,8 @@ def extract_transactions(
                 },
             },
         )
+        backend = backend_from_headers(raw.headers)
+        response = raw.parse()
 
         if not response.choices:
             raise LlmExtractionError("LiteLLM response had no choices")
@@ -309,18 +310,14 @@ def extract_transactions(
             _to_draft(row, institution_slug=institution_slug, account_mask_override=account_mask)
             for row in rows
         ]
-    except Exception:
-        # `response` is only `None` if the request call itself failed
-        # (network/auth/rate-limit) — anything after that knows which
-        # backend LiteLLM routed to even though the request ultimately
-        # failed (e.g. a malformed-response LlmExtractionError).
-        metrics.record_llm_request(
-            outcome="error",
-            backend=_extraction_backend(response) if response is not None else "unknown",
-        )
+    except Exception as exc:
+        # Before the call returns, only an error response can say which
+        # backend failed; after it, the success header already did.
+        if backend == "unknown":
+            backend = backend_from_error(exc)
+        metrics.record_llm_request(outcome="error", backend=backend)
         raise
 
-    backend = _extraction_backend(response)
     metrics.record_llm_request(outcome="success", backend=backend)
     metrics.record_llm_tokens_from_response(response, backend=backend)
 
@@ -387,20 +384,3 @@ def _to_draft(
         confidence=row_confidence,
         method="llm",
     )
-
-
-def _extraction_backend(response: Any) -> str:
-    """Derive `vllm|groq` from the underlying model LiteLLM actually routed to.
-
-    LiteLLM echoes the resolved `litellm_params.model` (e.g. `groq/llama-...`
-    or `hosted_vllm/...`) back in the response's `model` field rather than the
-    requested alias (`extractor`) — its provider prefix is the routing
-    decision ADR v1.1.0 §3 wants recorded in lineage.
-    """
-    model = getattr(response, "model", None) or ""
-    prefix = model.split("/", 1)[0].lower()
-    if prefix in ("vllm", "hosted_vllm"):
-        return "vllm"
-    if prefix == "groq":
-        return "groq"
-    return prefix or "unknown"

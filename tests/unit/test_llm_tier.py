@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import openai
 import pytest
 
@@ -82,7 +84,18 @@ class _FakeChoice:
 @dataclass
 class _FakeResponse:
     choices: list[_FakeChoice]
-    model: str = "groq/llama-3.3-70b-versatile"
+    # LiteLLM v1.104.2 overwrites `model` with the requested alias; the deployment
+    # that actually served the call travels only in the `x-litellm-model-name` header.
+    model: str = "extractor"
+
+
+@dataclass
+class _FakeRaw:
+    headers: dict[str, str]
+    response: _FakeResponse
+
+    def parse(self) -> _FakeResponse:
+        return self.response
 
 
 @dataclass
@@ -90,6 +103,13 @@ class _FakeCompletions:
     response: _FakeResponse | None = None
     error: Exception | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
+    headers: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.with_raw_response = SimpleNamespace(create=self._create_raw)
+
+    def _create_raw(self, **kwargs: Any) -> _FakeRaw:
+        return _FakeRaw(headers=self.headers, response=self.create(**kwargs))
 
     def create(self, **kwargs: Any) -> _FakeResponse:
         self.calls.append(kwargs)
@@ -112,8 +132,10 @@ class FakeClient:
         model: str = "groq/llama-3.3-70b-versatile",
     ):
         content = json.dumps({"transactions": transactions})
-        response = _FakeResponse(choices=[_FakeChoice(_FakeMessage(content))], model=model)
-        self.chat = _FakeChat(completions=_FakeCompletions(response=response))
+        response = _FakeResponse(choices=[_FakeChoice(_FakeMessage(content))])
+        self.chat = _FakeChat(
+            completions=_FakeCompletions(response=response, headers={"x-litellm-model-name": model})
+        )
         # Every injected client is validated by base_url, doubles included —
         # there is no type-based exemption to hide behind.
         self.base_url = "http://litellm:4000"
@@ -478,8 +500,16 @@ def test_injected_sdk_client_pointed_at_the_router_is_accepted() -> None:
 def test_null_confidence_value_becomes_an_extraction_error() -> None:
     """`float(None)` raises TypeError, which used to escape `_to_draft`'s handler
     and surface as a bare TypeError instead of the error every caller catches."""
-    row = _row(confidence={"occurred_at": 1.0, "description": 1.0, "kind": 1.0,
-                           "amount": None, "balance_after": 0.8, "account_mask": 1.0})
+    row = _row(
+        confidence={
+            "occurred_at": 1.0,
+            "description": 1.0,
+            "kind": 1.0,
+            "amount": None,
+            "balance_after": 0.8,
+            "account_mask": 1.0,
+        }
+    )
     client = FakeClient(transactions=[row])
     with pytest.raises(LlmExtractionError, match="malformed transaction row"):
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
@@ -521,3 +551,38 @@ def test_injected_client_without_a_base_url_is_rejected() -> None:
     del double.base_url
     with pytest.raises(LlmEndpointNotApprovedError):
         extract_transactions(RAW_TEXT, institution_slug="scotia", client=double)
+
+
+# AA-61 (#44): provenance must name the deployment that served the call. LiteLLM
+# echoes the alias in `response.model`, so only the response header is trusted.
+
+
+def test_backend_comes_from_the_header_not_the_alias_model_field() -> None:
+    client = FakeClient([_row()], model="hosted_vllm/qwen3-4b")
+    assert client.chat.completions.response.model == "extractor"
+    result = extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+    assert result.extraction_backend == "vllm"
+
+
+def test_missing_backend_header_records_unknown() -> None:
+    client = FakeClient([_row()])
+    client.chat.completions.headers = {}
+    result = extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+    assert result.extraction_backend == "unknown"
+
+
+def test_error_response_header_names_the_failing_backend() -> None:
+    client = FakeClient([_row()])
+    request = httpx.Request("POST", "http://litellm:4000/chat/completions")
+    response = httpx.Response(
+        500, headers={"x-litellm-model-name": "groq/llama-3.3-70b-versatile"}, request=request
+    )
+    client.chat.completions.error = openai.InternalServerError("boom", response=response, body=None)
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq")
+
+    with pytest.raises(openai.InternalServerError):
+        extract_transactions(RAW_TEXT, institution_slug="scotia", client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq") == (
+        before + 1
+    )

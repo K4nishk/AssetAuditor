@@ -43,6 +43,7 @@ from app.domain.audit_commentary import (
 from app.obs.logging import configure_logging
 from worker import metrics
 from worker.lineage import LineageEmitter
+from worker.llm_backend import backend_from_error, backend_from_headers
 
 logger = logging.getLogger("worker.commentary")
 
@@ -144,17 +145,6 @@ def _resolve_client(client: openai.OpenAI | None) -> openai.OpenAI:
     return client
 
 
-def _extraction_backend(response: Any) -> str:
-    """Same `vllm|groq` derivation as `worker.extract.llm_tier._extraction_backend`."""
-    model = getattr(response, "model", None) or ""
-    prefix = model.split("/", 1)[0].lower()
-    if prefix in ("vllm", "hosted_vllm"):
-        return "vllm"
-    if prefix == "groq":
-        return "groq"
-    return prefix or "unknown"
-
-
 def request_commentary(
     facts_text: str, *, client: openai.OpenAI | None = None
 ) -> CommentaryLlmResult:
@@ -165,9 +155,9 @@ def request_commentary(
     persisted or shown."""
     active_client = _resolve_client(client)
 
-    response = None
+    backend = "unknown"
     try:
-        response = active_client.chat.completions.create(
+        raw = active_client.chat.completions.with_raw_response.create(
             model=MODEL_GROUP,
             temperature=0,
             messages=[
@@ -183,6 +173,8 @@ def request_commentary(
                 },
             },
         )
+        backend = backend_from_headers(raw.headers)
+        response = raw.parse()
 
         if not response.choices:
             raise AuditCommentaryError("LiteLLM response had no choices")
@@ -212,14 +204,14 @@ def request_commentary(
             isinstance(entry, str) for entry in observations
         ):
             raise AuditCommentaryError("LiteLLM response missing a string 'observations' array")
-    except Exception:
-        metrics.record_llm_request(
-            outcome="error",
-            backend=_extraction_backend(response) if response is not None else "unknown",
-        )
+    except Exception as exc:
+        # Before the call returns, only an error response can say which
+        # backend failed; after it, the success header already did.
+        if backend == "unknown":
+            backend = backend_from_error(exc)
+        metrics.record_llm_request(outcome="error", backend=backend)
         raise
 
-    backend = _extraction_backend(response)
     metrics.record_llm_request(outcome="success", backend=backend)
     metrics.record_llm_tokens_from_response(response, backend=backend)
 

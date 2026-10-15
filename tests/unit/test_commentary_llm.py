@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import openai
 import pytest
 
@@ -45,7 +47,18 @@ class _FakeChoice:
 @dataclass
 class _FakeResponse:
     choices: list[_FakeChoice]
-    model: str = "groq/llama-3.3-70b-versatile"
+    # LiteLLM v1.104.2 overwrites `model` with the requested alias; the deployment
+    # that actually served the call travels only in the `x-litellm-model-name` header.
+    model: str = "commentary"
+
+
+@dataclass
+class _FakeRaw:
+    headers: dict[str, str]
+    response: _FakeResponse
+
+    def parse(self) -> _FakeResponse:
+        return self.response
 
 
 @dataclass
@@ -53,6 +66,13 @@ class _FakeCompletions:
     response: _FakeResponse | None = None
     error: Exception | None = None
     calls: list[dict[str, Any]] = field(default_factory=list)
+    headers: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.with_raw_response = SimpleNamespace(create=self._create_raw)
+
+    def _create_raw(self, **kwargs: Any) -> _FakeRaw:
+        return _FakeRaw(headers=self.headers, response=self.create(**kwargs))
 
     def create(self, **kwargs: Any) -> _FakeResponse:
         self.calls.append(kwargs)
@@ -70,8 +90,10 @@ class _FakeChat:
 class FakeClient:
     def __init__(self, observations: list[str], *, model: str = "groq/llama-3.3-70b-versatile"):
         content = json.dumps({"observations": observations})
-        response = _FakeResponse(choices=[_FakeChoice(_FakeMessage(content))], model=model)
-        self.chat = _FakeChat(completions=_FakeCompletions(response=response))
+        response = _FakeResponse(choices=[_FakeChoice(_FakeMessage(content))])
+        self.chat = _FakeChat(
+            completions=_FakeCompletions(response=response, headers={"x-litellm-model-name": model})
+        )
         self.base_url = "http://litellm:4000"
 
     @property
@@ -233,6 +255,41 @@ def test_records_an_error_metric_with_backend_on_a_malformed_response():
     before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq")
 
     with pytest.raises(AuditCommentaryError):
+        request_commentary(FACTS_TEXT, client=client)
+
+    assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq") == (
+        before + 1
+    )
+
+
+# AA-61 (#44): provenance must name the deployment that served the call. LiteLLM
+# echoes the alias in `response.model`, so only the response header is trusted.
+
+
+def test_backend_comes_from_the_header_not_the_alias_model_field() -> None:
+    client = FakeClient(["obs"], model="hosted_vllm/qwen3-4b")
+    assert client.chat.completions.response.model == "commentary"
+    result = request_commentary(FACTS_TEXT, client=client)
+    assert result.backend == "vllm"
+
+
+def test_missing_backend_header_records_unknown() -> None:
+    client = FakeClient(["obs"])
+    client.chat.completions.headers = {}
+    result = request_commentary(FACTS_TEXT, client=client)
+    assert result.backend == "unknown"
+
+
+def test_error_response_header_names_the_failing_backend() -> None:
+    client = FakeClient(["obs"])
+    request = httpx.Request("POST", "http://litellm:4000/chat/completions")
+    response = httpx.Response(
+        500, headers={"x-litellm-model-name": "groq/llama-3.3-70b-versatile"}, request=request
+    )
+    client.chat.completions.error = openai.InternalServerError("boom", response=response, body=None)
+    before = _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq")
+
+    with pytest.raises(openai.InternalServerError):
         request_commentary(FACTS_TEXT, client=client)
 
     assert _counter_value(metrics.LLM_REQUESTS_TOTAL, outcome="error", backend="groq") == (
