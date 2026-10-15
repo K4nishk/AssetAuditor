@@ -14,7 +14,7 @@ a row in `docs/metrics/liberated-capacity.csv`, and
 | **Liberated hours** | Baseline hours − owner hours. Can be negative. |
 | **AI cost** | Measured, not estimated: the Claude Code transcripts priced at Anthropic API list prices. |
 | **Infra cost** | Paid services used for the PR. $0 under the zero-cost contract (hard rule 6); a non-zero value is an incident. |
-| **Overhead** | AI cost not attributable to one PR (status updates, review-order questions, PR watching). Counted in USD, never in hours. |
+| **Overhead** | AI cost not attributable to one PR (status updates, review-order questions, PR watching, ledger-only updates; a ledger update with its own row would need another update for that row). Counted in USD, never in hours. |
 
 ## How AI cost is measured
 
