@@ -52,3 +52,11 @@ _Avoid_: recommendation
 **Shadow guard**:
 A check that records a verdict on a model output and never changes or blocks that output.
 _Avoid_: guardrail, filter
+
+## Delivery
+
+**Liberated Capacity**:
+The human hours a PR freed: the baseline hours a developer would need without AI, minus the
+owner's own time on the PR, reported with what the PR cost to build in USD
+(`docs/metrics/liberated-capacity.md`).
+_Avoid_: time saved, productivity gain
