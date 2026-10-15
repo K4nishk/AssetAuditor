@@ -139,3 +139,14 @@ def test_totals_command_reports_cost_per_liberated_hour(
     )
     assert main(["totals", str(ledger)]) == 0
     assert "usd_per_h      2.00" in capsys.readouterr().out
+
+
+def test_the_repo_ledger_parses_and_reconciles() -> None:
+    import csv
+
+    with Path("docs/metrics/liberated-capacity.csv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    totals = ledger_totals(rows)
+    assert totals["total_usd"] == totals["pr_usd"] + totals["overhead_usd"]
+    assert totals["liberated_h"] == totals["baseline_h"] - totals["owner_h"]
+    assert {row["pr"] for row in rows if row["status"] != "overhead"} >= {"61", "62", "66"}

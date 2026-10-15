@@ -21,6 +21,7 @@ REFERENCED_PATHS = [
     "docs/vault/40-research/PDF-Statement-Parsing.md",
     "skills/e2e-testing/SKILL.md",
     "ops/orchestrator.sh",
+    "docs/metrics/liberated-capacity.md",
 ]
 
 

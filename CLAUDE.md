@@ -34,6 +34,7 @@ main                     production-deployment code
 - Commit messages are conventional and name the issue: `feat(ASA-14): kraken ledger adapter`.
 - Upstream work you inherit is listed in the "Contracts from upstream agents" section of your prompt. Those interfaces are settled — import them, don't reimplement or refactor them.
 - Publish your own interface to `CONTRACT_OUT.md` in the repo root (never commit it): module paths, key signatures, new tables/columns, under 20 lines. The next agent builds against it.
+- Every PR body ends with the **Liberated Capacity** section from `.github/pull_request_template.md`: baseline hours (your estimate, marked [REVIEW REQUIRED]), owner hours, and the AI cost measured by `python -m tools.liberated_capacity cost`. After merge, add the row to `docs/metrics/liberated-capacity.csv`. Definitions and rubric: `docs/metrics/liberated-capacity.md`. Switch back to `development` when you are not working on a PR, so idle conversation is not billed to it.
 
 ## CodeRabbit review protocol — binding
 
