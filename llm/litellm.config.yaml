@@ -16,17 +16,22 @@
 # sized to leave headroom under the account-wide limit rather than being an
 # independent budget — 25 (extractor) + 5 (commentary) rpm and 5000 + 1000
 # tpm must both stay below whatever the console reports today.
+#
+# Model: Groq retired llama-3.3-70b-versatile for free and developer accounts
+# on 2026-08-16 (404 model_not_found); gpt-oss-120b is its documented
+# replacement. The caps above were sized for the retired model and are kept
+# until the owner confirms the new model's console limits.
 model_list:
   - model_name: extractor
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
       rpm: 25
       tpm: 5000
       max_retries: 0 # a retry storm, not a single slow call, is the real cap risk
   - model_name: commentary
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
       rpm: 5
       tpm: 1000

@@ -43,6 +43,8 @@ from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
+from worker.llm_backend import clamp_backend
+
 logger = logging.getLogger("worker.metrics")
 
 DEFAULT_METRICS_PORT = 9100
@@ -110,11 +112,11 @@ def record_etl_job_duration(seconds: float) -> None:
 
 
 def record_llm_request(*, outcome: str, backend: str) -> None:
-    LLM_REQUESTS_TOTAL.labels(outcome=outcome, backend=backend).inc()
+    LLM_REQUESTS_TOTAL.labels(outcome=outcome, backend=clamp_backend(backend)).inc()
 
 
 def record_llm_tokens(*, backend: str, count: int) -> None:
-    LLM_TOKENS_TOTAL.labels(backend=backend).inc(count)
+    LLM_TOKENS_TOTAL.labels(backend=clamp_backend(backend)).inc(count)
 
 
 def record_llm_tokens_from_response(response: Any, *, backend: str) -> None:

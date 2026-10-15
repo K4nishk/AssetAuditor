@@ -31,7 +31,7 @@ _INSERT_NEEDS_USER_SQL = """
 
 _GET_STATUS_BY_BRONZE_FILE_SQL = """
     select id, user_id, bronze_file_id, status, claimed_by, claimed_at,
-           error, created_at, updated_at
+           error, wait_reason, created_at, updated_at
     from public.etl_jobs
     where user_id = $1 and bronze_file_id = $2
     order by created_at desc
