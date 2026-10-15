@@ -1,0 +1,19 @@
+# Local model identity (AA-60, #43; spec #39 decisions 1, 2 and 10).
+#
+# The Golden-set spike (AA-65) picks the model; until it does, this is the
+# first candidate on its shortlist. worker/docker-compose.yml and
+# llm/litellm.config.yaml repeat these values literally, and
+# tests/unit/test_local_stack_config.py keeps all three files in step.
+repo = "Qwen/Qwen3-4B-Instruct-2507"
+family = "qwen3-4b-2507"
+# vLLM 0.31.0 online FP8 (the RTX 3060 has no room for bf16 weights at 0.55);
+# plain "fp8" fails at start-up.
+quantization = "fp8_per_tensor"
+# The Hugging Face commit to serve. "unpinned" until the owner seeds the
+# weights on the Box and records it: huggingface.co is unreachable from the
+# container that wrote this file. The vllm-seed service prints the snapshot
+# path, and its last segment is the commit. When recorded, set it here, add
+# `--revision <commit>` to the vllm command, and end the served name with its
+# first 7 characters.
+revision = "unpinned"
+served_model_name = "qwen3-4b-2507-fp8-unpinned"

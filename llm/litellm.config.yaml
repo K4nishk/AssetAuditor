@@ -1,11 +1,12 @@
 # LiteLLM router config (AA-16 / ADR v1.1.0 §3) — model groups "extractor"
 # and "commentary" (AA-25, worker/commentary.py).
 #
-# Groq-only until the GPU box lands: AA-33 adds a `hosted_vllm/...` entry
-# under the same `model_name: extractor` group as the routing primary, with
-# this Groq entry becoming the automatic-cooldown fallback. Until then,
-# the worker's `extractor` requests (worker/extract/llm_tier.py) can only
-# ever reach Groq.
+# `extractor` and `commentary` stay Groq-only, so production routing is
+# unchanged. ADR v1.2.0 §3 (AA-60) adds a separate `<use>-local` group per use
+# that reaches only the Box's vLLM: the worker, not the router, decides which
+# group to call (worker/model_target.py), so a `-local` group never retries,
+# never falls back and carries no rpm/tpm. Its served-model name is
+# llm/local_model.toml's, kept in step by tests/unit/test_local_stack_config.py.
 #
 # RPM/TPM caps are set below Groq's published free-tier limits for this
 # model (console.groq.com/settings/limits) so a runaway extraction loop can
@@ -36,6 +37,18 @@ model_list:
       rpm: 5
       tpm: 1000
       max_retries: 0
+  - model_name: extractor-local
+    litellm_params:
+      model: hosted_vllm/qwen3-4b-2507-fp8-unpinned
+      api_base: http://vllm:8000/v1
+      num_retries: 0 # the worker's call policy (AA-62) owns retries
+      max_retries: 0 # and the SDK must not multiply them
+  - model_name: commentary-local
+    litellm_params:
+      model: hosted_vllm/qwen3-4b-2507-fp8-unpinned
+      api_base: http://vllm:8000/v1
+      num_retries: 0
+      max_retries: 0
 
 litellm_settings:
   drop_params: true
@@ -48,3 +61,6 @@ litellm_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # Off: a background probe of a group containing Groq is a real completion
+  # call that spends quota.
+  background_health_checks: false

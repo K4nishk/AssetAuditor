@@ -6,6 +6,9 @@
 # only, same non-published convention as `litellm` below; `alloy` is what
 # actually scrapes it and every sibling `/metrics` endpoint into Grafana
 # Cloud (worker/observability/alloy-config.alloy).
+#
+# Every image is pinned by tag plus digest (AA-60): a moving tag such as
+# `latest` or `main-stable` silently changes what runs on the Box.
 
 services:
   worker:
@@ -28,7 +31,7 @@ services:
       - litellm
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:v1.104.2@sha256:3d88bd757134a00e8c00237b85a021ab1f6d54abb9c1df750f411dbe7256a500
     restart: unless-stopped
     # localhost-only listener (ADR v1.1.0 §2) — no `ports:` mapping, so it is
     # reachable from `worker` on the compose network but never from the host's
@@ -42,12 +45,59 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
 
+  # Local backend (AA-60; ADR v1.2.0 §2). Model identity: llm/local_model.toml.
+  # Serving is offline: weights come only from the vllm-models volume, which
+  # the one-shot `vllm-seed` service fills (`--profile seed`). Numbers marked
+  # R4.4 are placeholders the spike (AA-65) replaces with measured values.
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.31.0@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3
     restart: unless-stopped
     profiles: ["gpu"]
+    command:
+      - "Qwen/Qwen3-4B-Instruct-2507"
+      - "--served-model-name"
+      - "qwen3-4b-2507-fp8-unpinned"
+      - "--quantization"
+      - "fp8_per_tensor"
+      # A fraction of the card's total memory; vLLM aborts at start-up if less
+      # than this is free. ~8 GB of 12 GB is free, so 0.55 (hard ceiling 0.62).
+      - "--gpu-memory-utilization"
+      - "0.55"
+      # Pinned, because desktop VRAM moving during start-up mis-sizes the KV
+      # cache. R4.4 placeholder: 1.5 GiB.
+      - "--kv-cache-memory-bytes"
+      - "1610612736"
+      # R4.4 placeholder.
+      - "--max-model-len"
+      - "8192"
+      - "--port"
+      - "8000"
+      # Per-request (prompt) logging stays off: it is opt-in
+      # (`--enable-log-requests`) in vLLM 0.31.0 and is never passed here.
+    environment:
+      HF_HOME: /models/hf
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      # vLLM reports usage stats to its maintainers by default; the Box sends
+      # nothing anywhere it doesn't have to.
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+    volumes:
+      - vllm-models:/models
+    # Shared memory for vLLM's worker processes; `ipc: host` is not used.
+    shm_size: "2gb"
     expose:
       - "8000"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10m
     deploy:
       resources:
         reservations:
@@ -56,8 +106,29 @@ services:
               count: all
               capabilities: ["gpu"]
 
+  # One-shot weight download into vllm-models: `docker compose --profile seed
+  # run --rm vllm-seed`. The only service that goes online for weights, and the
+  # only one that ever sees HF_TOKEN (optional; the Qwen candidates are public).
+  # It prints the snapshot path, whose last segment is the commit to record in
+  # llm/local_model.toml.
+  vllm-seed:
+    image: vllm/vllm-openai:v0.31.0@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3
+    profiles: ["seed"]
+    restart: "no"
+    entrypoint:
+      - "python3"
+      - "-c"
+      - "import os; from huggingface_hub import snapshot_download; print(snapshot_download(os.environ['LOCAL_MODEL_REPO']))"
+    environment:
+      HF_HOME: /models/hf
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_TOKEN: ${HF_TOKEN:-}
+      LOCAL_MODEL_REPO: "Qwen/Qwen3-4B-Instruct-2507"
+    volumes:
+      - vllm-models:/models
+
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
     restart: unless-stopped
     # Outbound-only, same convention as `worker` above: no `ports:` mapping,
     # this container never accepts an inbound connection from anywhere but
@@ -72,3 +143,6 @@ services:
     depends_on:
       - worker
       - litellm
+
+volumes:
+  vllm-models: {}
