@@ -15,19 +15,21 @@
 # verified against a live Groq account from this repo. `commentary` shares
 # the same underlying Groq model/account as `extractor`, so its caps are
 # sized to leave headroom under the account-wide limit rather than being an
-# independent budget — 25 (extractor) + 5 (commentary) rpm and 5000 + 1000
+# independent budget — 20 (extractor) + 5 (commentary) rpm and 5000 + 1000
 # tpm must both stay below whatever the console reports today.
 #
 # Model: Groq retired llama-3.3-70b-versatile for free and developer accounts
 # on 2026-08-16 (404 model_not_found); gpt-oss-120b is its documented
-# replacement. The caps above were sized for the retired model and are kept
-# until the owner confirms the new model's console limits.
+# replacement. Its free-tier limits, read from the console by the owner on
+# 2026-10-15: 30 RPM, 1K RPD, 8K TPM, 200K TPD. The caps below total 25 rpm
+# and 6000 tpm, under both per-minute limits. Daily limits are not capped
+# here; on the free tier Groq answers 429 past them rather than billing.
 model_list:
   - model_name: extractor
     litellm_params:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
-      rpm: 25
+      rpm: 20
       tpm: 5000
       max_retries: 0 # a retry storm, not a single slow call, is the real cap risk
   - model_name: commentary
