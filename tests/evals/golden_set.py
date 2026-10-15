@@ -4,8 +4,8 @@ Reuses the Scotiabank PDF/CSV pairing `tests/unit/test_scotiabank_pdf_adapter.py
 uses for the deterministic adapter's kill gate: the CSV's chequing rows are
 the known-correct answer, the PDF is the same statement as text-layer bytes.
 The deterministic adapter is expected to match it exactly; the LLM fallback
-tier is only expected to come close, so `test_llm_golden_set.py` scores
-against these rows rather than asserting equality.
+tier is scored against these rows by `tests.evals.scorer` (AA-59): zero errors
+on every numeric field, one description miss allowed.
 """
 
 from __future__ import annotations
